@@ -5,7 +5,6 @@ import type { Library } from './core/library.js';
 import type { ImportQueue } from './core/jobs.js';
 import type { CaptureFields, Citation } from './types.js';
 import type { DirectorySettings } from './directory-settings.js';
-import type { FetchPolicy } from './core/fetch.js';
 
 export const API_PATH = '/knowledge-library/api';
 function send(res: ServerResponse, status: number, value: unknown) {
@@ -34,7 +33,7 @@ function fields(data: Record<string, any>): CaptureFields {
 }
 const localAddress = (address = '') => address === '::1' || address === '127.0.0.1' || address === '::ffff:127.0.0.1';
 
-export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string, directories?: DirectorySettings, policy: FetchPolicy = {}) {
+export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string, directories?: DirectorySettings) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const origin = getOrigin();
@@ -45,7 +44,7 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       const url = new URL(req.url || '/', origin);
       const path = url.pathname.slice(API_PATH.length);
       if (req.method === 'GET') {
-        if (path === '/settings') { send(res, 200, { root: library.root, ...(directories?.status() ?? { canChange: false, picker: null, allowProxyFakeIp: policy.allowProxyFakeIp === true }) }); return; }
+        if (path === '/settings') { send(res, 200, { root: library.root, ...(directories?.status() ?? { canChange: false, canChangeNetwork: false, picker: null, allowProxyFakeIp: false }) }); return; }
         if (path === '/stats') { send(res, 200, library.stats()); return; }
         if (path === '/materials') {
           send(res, 200, library.search({ ...Object.fromEntries(url.searchParams), limit: Number(url.searchParams.get('limit')) || 40, offset: Number(url.searchParams.get('offset')) || 0 })); return;

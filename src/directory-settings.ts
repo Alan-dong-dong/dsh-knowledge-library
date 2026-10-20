@@ -8,7 +8,7 @@ import type { FetchPolicy } from './core/fetch.js';
 
 export type { DirectoryListing };
 export interface DirectorySettings {
-  status(): { canChange: boolean; picker: 'native' | 'browse' | null; allowProxyFakeIp: boolean };
+  status(): { canChange: boolean; canChangeNetwork: boolean; picker: 'native' | 'browse' | null; allowProxyFakeIp: boolean };
   pick(signal: AbortSignal): Promise<string | null>;
   list(path: string | undefined, signal: AbortSignal): Promise<DirectoryListing>;
   change(root: string, expectedRoot: string): Promise<string>;
@@ -27,7 +27,8 @@ export function createDirectorySettings(ctx: Context, library: Library, policy: 
   return {
     status() {
       const kind = capability()?.kind;
-      return { canChange: !!editorEntry(), picker: kind === 'native' || kind === 'browse' ? kind : null, allowProxyFakeIp: policy.allowProxyFakeIp === true };
+      const editable = !!editorEntry();
+      return { canChange: editable, canChangeNetwork: editable, picker: kind === 'native' || kind === 'browse' ? kind : null, allowProxyFakeIp: policy.allowProxyFakeIp === true };
     },
     async pick(signal) {
       const picker = capability();

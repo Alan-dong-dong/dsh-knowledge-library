@@ -98,8 +98,36 @@ with sync_playwright() as p:
     expect(page.get_by_role("region", name="资料列表")).to_be_visible()
     page.get_by_role("button", name="资料库设置", exact=True).click()
     expect(page.get_by_role("dialog")).to_be_visible()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_role("button", name="选择目录", exact=True)).to_be_disabled()
+    expect(dialog.get_by_role("checkbox")).to_be_enabled()
+    expect(dialog.get_by_role("checkbox")).not_to_be_checked()
+    dialog.get_by_role("checkbox").check()
     page.keyboard.press("Escape")
+    assert page.request.get(base + "/knowledge-library/api/settings").json()["allowProxyFakeIp"] is False
     expect(page.get_by_role("button", name="资料库设置", exact=True)).to_be_focused()
+    page.get_by_role("button", name="资料库设置", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_role("checkbox")).not_to_be_checked()
+    dialog.get_by_role("checkbox").check()
+    with page.expect_response(lambda response: response.url.endswith("/settings/network")) as response:
+        dialog.get_by_role("button", name="保存采集设置", exact=True).click()
+    assert response.value.status == 200
+    page.reload()
+    page.get_by_role("button", name="资料库设置", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_role("checkbox")).to_be_checked()
+    page.screenshot(path=str(out / "preview-proxy-settings.png"), full_page=True, animations="disabled")
+    dialog.get_by_role("checkbox").uncheck()
+    with page.expect_response(lambda response: response.url.endswith("/settings/network")) as response:
+        dialog.get_by_role("button", name="保存采集设置", exact=True).click()
+    assert response.value.status == 200
+    assert page.request.get(base + "/knowledge-library/api/settings").json()["allowProxyFakeIp"] is False
+    dialog.get_by_role("checkbox").check()
+    with page.expect_response(lambda response: response.url.endswith("/settings/network")) as response:
+        dialog.get_by_role("button", name="保存采集设置", exact=True).click()
+    assert response.value.status == 200
+    page.keyboard.press("Escape")
     page.get_by_role("button", name="收集资料", exact=True).click()
     dialog = page.get_by_role("dialog")
     dialog.get_by_role("tab", name="文本摘录").click()
@@ -111,6 +139,6 @@ with sync_playwright() as p:
     expect(page.locator(".kl-app")).to_have_css("background-color", "rgb(25, 26, 30)")
     page.screenshot(path=str(out / "library-mobile-dark.png"), full_page=True, animations="disabled")
     assert not errors, errors
-    (out / "ui-result.json").write_text(json.dumps({"passed": True, "browser": browser.version, "errors": errors, "flows": ["text capture", "Chinese search", "cited note", "metadata move", "reload persistence", "subtitle upload", "type filter reset", "XSS text rendering", "mobile overflow", "category and collection navigation", "mobile reading and dialogs", "keyboard focus restoration", "standalone dark theme"]}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out / "ui-result.json").write_text(json.dumps({"passed": True, "browser": browser.version, "errors": errors, "flows": ["text capture", "Chinese search", "cited note", "metadata move", "reload persistence", "subtitle upload", "type filter reset", "XSS text rendering", "mobile overflow", "category and collection navigation", "mobile reading and dialogs", "keyboard focus restoration", "standalone dark theme", "preview proxy settings save/cancel/disable"]}, ensure_ascii=False, indent=2), encoding="utf-8")
     browser.close()
-    print("PASS: 13 browser flows; desktop, mobile, dialog and dark screenshots saved.")
+    print("PASS: 14 browser flows; preview proxy toggle, desktop, mobile, dialog and dark screenshots saved.")

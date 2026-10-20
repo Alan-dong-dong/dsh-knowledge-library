@@ -63,7 +63,7 @@ test('host chooser cancellation is read-only, prevents duplicate dialogs and pas
   const ctx = { get: (name: string) => name === 'directoryPicker' ? { capability: () => picker } : undefined } as unknown as Context;
   const settings = createDirectorySettings(ctx, library);
   try {
-    assert.deepEqual(settings.status(), { canChange: false, picker: 'native', allowProxyFakeIp: false });
+    assert.deepEqual(settings.status(), { canChange: false, canChangeNetwork: false, picker: 'native', allowProxyFakeIp: false });
     const pending = settings.pick(new AbortController().signal);
     await assert.rejects(settings.pick(new AbortController().signal), /已打开/);
     done(null); assert.equal(await pending, null);
