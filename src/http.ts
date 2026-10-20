@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { Library } from './core/library.js';
 import type { ImportQueue } from './core/jobs.js';
 import type { CaptureFields, Citation } from './types.js';
+import type { DirectorySettings } from './directory-settings.js';
 
 export const API_PATH = '/knowledge-library/api';
 function send(res: ServerResponse, status: number, value: unknown) {
@@ -32,7 +33,7 @@ function fields(data: Record<string, any>): CaptureFields {
 }
 const localAddress = (address = '') => address === '::1' || address === '127.0.0.1' || address === '::ffff:127.0.0.1';
 
-export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string) {
+export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string, directories?: DirectorySettings) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const origin = getOrigin();
@@ -43,6 +44,7 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       const url = new URL(req.url || '/', origin);
       const path = url.pathname.slice(API_PATH.length);
       if (req.method === 'GET') {
+        if (path === '/settings') { send(res, 200, { root: library.root, ...(directories?.status() ?? { canChange: false, picker: null }) }); return; }
         if (path === '/stats') { send(res, 200, library.stats()); return; }
         if (path === '/materials') {
           send(res, 200, library.search({ ...Object.fromEntries(url.searchParams), limit: Number(url.searchParams.get('limit')) || 40, offset: Number(url.searchParams.get('offset')) || 0 })); return;
@@ -65,6 +67,25 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       if (req.method === 'POST' || req.method === 'PATCH') {
         if (req.headers['x-knowledge-library'] !== '1') { send(res, 403, { error: '缺少同源请求标记' }); return; }
         const data = await body(req);
+        if (req.method === 'POST' && ['/directory/pick', '/directory/list', '/settings/root'].includes(path)) {
+          if (!directories) throw new Error('请在 Harness 中选择和切换资料库目录');
+          if (path === '/settings/root') {
+            if (typeof data.root !== 'string' || typeof data.expectedRoot !== 'string') throw new Error('资料库目录必须是字符串');
+            const root = await directories.change(data.root, data.expectedRoot);
+            send(res, 200, { root }); return;
+          }
+          const abort = new AbortController();
+          const disconnected = () => abort.abort();
+          res.once('close', disconnected);
+          try {
+            if (path === '/directory/pick') send(res, 200, { path: await directories.pick(abort.signal) });
+            else {
+              if (data.path !== undefined && typeof data.path !== 'string') throw new Error('目录路径必须是字符串');
+              send(res, 200, await directories.list(data.path, abort.signal));
+            }
+          } finally { res.off('close', disconnected); }
+          return;
+        }
         if (req.method === 'POST' && path === '/capture') {
           const captureFields = fields(data);
           if (data.type === 'url' && typeof data.content === 'string') {

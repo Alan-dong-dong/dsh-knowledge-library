@@ -8,6 +8,7 @@ import { ImportQueue } from './core/jobs.js';
 import { createTools } from './tools.js';
 import { API_PATH, createHandler } from './http.js';
 import { fetchPublicPage } from './core/fetch.js';
+import { createDirectorySettings } from './directory-settings.js';
 
 export const name = 'knowledge-library';
 export const inject = ['tools'];
@@ -23,10 +24,10 @@ export function apply(ctx: Context, config: Config) {
   ctx.effect(() => async () => { await queue.close(); library.close(); });
   for (const tool of createTools(library, queue)) ctx.tools.register(tool);
   ctx.inject(['webServer'], child => {
-    child.webServer.register({
+    child.effect(() => child.webServer.register({
       kind: 'prefix', path: API_PATH,
-      handler: createHandler(library, queue, () => child.webServer.getOrigin()),
-    });
+      handler: createHandler(library, queue, () => child.webServer.getOrigin(), createDirectorySettings(ctx, library)),
+    }));
   });
   ctx.logger.info(`资料库已加载：${library.root}`);
 }

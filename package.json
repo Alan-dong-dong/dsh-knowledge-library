@@ -64,6 +64,7 @@
     "dev": "tsx src/standalone.ts",
     "start": "node dist/standalone.js",
     "test:ui": "python tests/run_ui.py",
+    "test:dsh:directory": "python tests/run_dsh_directory.py",
     "pack:check": "node scripts/check-package.mjs",
     "verify": "npm run build && npm test && npm run pack:check",
     "prepack": "npm run build"

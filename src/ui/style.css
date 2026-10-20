@@ -210,6 +210,25 @@
 .kl-info label { display: block; font-size: 12px; color: var(--kl-muted); margin-bottom: 8px; }
 .kl-info code { display: block; overflow-wrap: anywhere; background: var(--kl-sidebar); padding: 12px; border-radius: 8px; font-size: 12px; }
 .kl-info p { font-size: 13px; line-height: 1.8; color: var(--kl-secondary); margin: 16px 0; }
+.kl-root-field, .kl-folder-path { display: flex; gap: 8px; align-items: center; }
+.kl-root-field input, .kl-folder-path input { flex: 1; min-width: 0; border: .5px solid var(--kl-line); background: var(--kl-panel); border-radius: var(--kl-radius); padding: 10px 12px; font-size: 12px; }
+.kl-root-field input[readonly] { background: var(--kl-sidebar); }
+.kl-root-field button, .kl-folder-path button { flex-shrink: 0; }
+.kl-root-confirm { margin-top: 14px; padding: 12px; border: .5px solid var(--kl-line); border-radius: 10px; background: var(--kl-sidebar); }
+.kl-root-confirm p { margin: 0 0 12px; }
+.kl-root-confirm > div, .kl-folder-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.kl-folder-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.kl-folder-heading strong { font-size: 14px; font-weight: 500; }
+.kl-folder-crumbs { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0; }
+.kl-folder-crumbs button { border: 0; background: transparent; padding: 3px 0; font-size: 12px; color: var(--kl-muted); overflow-wrap: anywhere; }
+.kl-folder-crumbs span { padding: 0 6px; color: var(--kl-caption); }
+.kl-folder-entries { height: 240px; overflow: auto; border: .5px solid var(--kl-line); border-radius: 10px; padding: 6px; }
+.kl-folder-entries > button { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; border: 0; border-radius: 6px; padding: 10px; background: transparent; }
+.kl-folder-entries > button:hover { background: var(--kl-hover); }
+.kl-folder-entries > button span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.kl-folder-entries > p { padding: 0 10px; }
+.kl-folder-actions { margin-top: 16px; }
+.kl-info .kl-settings-error { color: var(--kl-error); overflow-wrap: anywhere; }
 .kl-error, .kl-form-error { background: var(--kl-sidebar); color: var(--kl-error); font-size: 13px; line-height: 1.7; padding: 10px 12px; border-radius: 8px; overflow-wrap: anywhere; }
 .kl-error { display: flex; align-items: center; gap: 12px; margin: 0 var(--kl-gutter) 14px; }
 .kl-error button { margin-left: auto; border: 0; background: transparent; color: inherit; display: flex; padding: 4px; }

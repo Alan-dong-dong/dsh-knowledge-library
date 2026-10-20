@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CaptureFields, Citation, ImportJob, MaterialDetail, MaterialKind, SearchResult, Segment } from '../types.js';
 import { Icon } from './icons.js';
+import type { DirectoryListing } from '../directory-settings.js';
 
 const API = '/knowledge-library/api';
 const kinds: Record<MaterialKind, { label: string; icon: string }> = {
@@ -18,7 +19,7 @@ async function api<T = any>(path: string, options: RequestInit = {}): Promise<T>
   if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
   return data as T;
 }
-const post = <T,>(path: string, value: unknown, method = 'POST') => api<T>(path, { method, body: JSON.stringify(value) });
+const post = <T,>(path: string, value: unknown, method = 'POST', signal?: AbortSignal) => api<T>(path, { method, body: JSON.stringify(value), signal });
 function splitTags(value: string) { return value.split(/[,，]/).map(v => v.trim()).filter(Boolean); }
 
 export function App() {
@@ -170,11 +171,67 @@ export function App() {
     {showJobs && <Dialog title="采集任务" description="网页在后台提取正文。关闭应用后，下次启动会恢复未完成任务。" onClose={() => setShowJobs(false)}>
       <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}><div><span className={`kl-job-status ${job.status}`}>{({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div><strong>{job.url}</strong>{job.error && <p role={job.status === 'failed' ? 'alert' : undefined}>{job.error}</p>}<div>{job.materialId && <button onClick={() => { setSelected(job.materialId); setShowJobs(false); refresh(); }}>查看资料 <Icon name="arrow" size={14} /></button>}{job.status === 'failed' && <button onClick={() => void post(`/jobs/${job.id}/retry`, {}).then(refresh).catch(e => setError(e.message))}>重新采集</button>}</div></div>)}</div>
     </Dialog>}
-    {showInfo && <Dialog title="你的资料，由你保管" description="内容以普通文件保存，索引可以重建。" onClose={() => setShowInfo(false)}>
-      <div className="kl-info"><label>资料库目录</label><code>{stats?.root}</code><p>每份资料保留原始文件、正文、元数据和引用段落。分类对应本地文件夹，插件卸载不会删除这些文件。</p><p>本版本可提取文章正文及字幕；音视频、PDF 等格式可以归档，自动转写和 OCR 尚未接入。</p>{stats?.warnings.map(w => <p role="alert" key={w}>{w}</p>)}<button className="kl-secondary" onClick={() => void post('/rebuild', {}).then(() => { refresh(); notify('索引已重建'); }).catch(e => setError(e.message))}>从资料文件重建索引</button></div>
-    </Dialog>}
+    {showInfo && <SettingsDialog root={stats?.root || ''} warnings={stats?.warnings || []} onClose={() => setShowInfo(false)} onChanged={() => {
+      setSelected(undefined); setDetail(undefined); setAnchor(undefined); setItems([]); setQuery(''); chooseFilter({}); refresh(); notify('资料库目录已切换');
+    }} onRebuilt={() => { refresh(); notify('索引已重建'); }} />}
     {toast && <div className="kl-toast" role="status"><Icon name="check" size={17} />{toast}</div>}
   </div>;
+}
+
+function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt }: { root: string; warnings: string[]; onClose: () => void; onChanged: () => void; onRebuilt: () => void }) {
+  const [settings, setSettings] = useState<{ canChange: boolean; picker: 'native' | 'browse' | null }>();
+  const [target, setTarget] = useState(root);
+  const [listing, setListing] = useState<DirectoryListing>();
+  const [browsePath, setBrowsePath] = useState('');
+  const [browsing, setBrowsing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const request = useRef<AbortController>();
+  useEffect(() => { const abort = new AbortController(); void api('/settings', { signal: abort.signal }).then(setSettings).catch(e => { if (!abort.signal.aborted) setError(e.message); }); return () => { abort.abort(); request.current?.abort(); }; }, []);
+  useEffect(() => { setTarget(root); }, [root]);
+  async function browse(path?: string) {
+    request.current?.abort(); const abort = new AbortController(); request.current = abort;
+    setBusy(true); setError(''); setListing(undefined);
+    try { const result = await post<DirectoryListing>('/directory/list', { path }, 'POST', abort.signal); setListing(result); setBrowsePath(result.path); }
+    catch (e) { if (!abort.signal.aborted) setError((e as Error).message); }
+    finally { if (!abort.signal.aborted) setBusy(false); }
+  }
+  async function pick() {
+    if (settings?.picker === 'browse') { setBrowsing(true); setListing(undefined); setBrowsePath(target); await browse(target || undefined); return; }
+    setBusy(true); setError(''); const abort = new AbortController(); request.current = abort;
+    try { const result = await post<{ path: string | null }>('/directory/pick', {}, 'POST', abort.signal); if (result.path) setTarget(result.path); }
+    catch (e) { if (!abort.signal.aborted) setError((e as Error).message); }
+    finally { if (!abort.signal.aborted) setBusy(false); }
+  }
+  async function change() {
+    setSaving(true); setError('');
+    try { const result = await post<{ root: string }>('/settings/root', { root: target.trim(), expectedRoot: root }); setTarget(result.root); onChanged(); }
+    catch (e) { setError((e as Error).message); }
+    finally { setSaving(false); }
+  }
+  const changed = target.trim() && target.trim() !== root;
+  return <Dialog title="你的资料，由你保管" description="内容以普通文件保存，索引可以重建。" onClose={() => { if (!saving) onClose(); }}>
+    <div className="kl-info">
+      {browsing ? <div className="kl-folder-browser" aria-label="选择资料库目录">
+        <div className="kl-folder-heading"><strong>选择资料库目录</strong><button className="kl-secondary" disabled={busy} onClick={() => void browse()}>主目录</button></div>
+        <form className="kl-folder-path" onSubmit={e => { e.preventDefault(); void browse(browsePath); }}><input aria-label="浏览目录路径" value={browsePath} onChange={e => setBrowsePath(e.target.value)} /><button className="kl-secondary" disabled={busy || !browsePath.trim()}>前往</button></form>
+        <nav className="kl-folder-crumbs" aria-label="目录层级">{listing?.crumbs.map(c => <button key={c.path} disabled={busy} onClick={() => void browse(c.path)}>{c.name}<span>/</span></button>)}</nav>
+        <div className="kl-folder-entries" aria-busy={busy}>{busy ? <p className="kl-muted">正在读取目录…</p> : listing && !listing.entries.length ? <p className="kl-muted">此目录没有子文件夹</p> : listing?.entries.map(entry => <button key={entry.path} onClick={() => void browse(entry.path)}><Icon name="folder" size={17} /><span>{entry.name}</span><Icon name="arrow" size={15} /></button>)}</div>
+        {listing?.truncated && <p className="kl-muted">子目录较多，仅显示部分。可填写完整路径前往。</p>}
+        <div className="kl-folder-actions"><button className="kl-secondary" onClick={() => { request.current?.abort(); setBusy(false); setBrowsing(false); setError(''); }}>取消选择</button><button className="kl-primary" disabled={busy || !listing} onClick={() => { setTarget(listing!.path); setBrowsing(false); setError(''); }}>选择此目录</button></div>
+      </div> : <>
+        <label htmlFor="kl-library-root">资料库目录</label>
+        <div className="kl-root-field"><input id="kl-library-root" value={target} title={target} spellCheck={false} readOnly={!settings?.canChange} disabled={saving || busy} onChange={e => setTarget(e.target.value)} /><button className="kl-secondary" disabled={!settings?.canChange || !settings.picker || busy || saving} onClick={() => void pick()}><Icon name="folder" size={16} />{busy ? '选择中…' : '选择目录'}</button></div>
+        {settings && !settings.canChange && <p className="kl-muted">请在 Harness 中选择和切换目录；独立预览可通过启动配置指定目录。</p>}
+        {!!changed && <div className="kl-root-confirm"><p>切换后将读取新目录，并将后续资料保存到那里。原目录的资料会保留，不会自动搬迁。</p><div><button className="kl-secondary" disabled={saving || busy} onClick={() => { setTarget(root); setError(''); }}>取消修改</button><button className="kl-primary" disabled={saving || busy} onClick={() => void change()}>{saving ? '正在切换…' : '切换资料库'}</button></div></div>}
+        <p>每份资料保留原始文件、正文、元数据和引用段落。分类对应本地文件夹，插件卸载不会删除这些文件。</p><p>本版本可提取文章正文及字幕；音视频、PDF 等格式可以归档，自动转写和 OCR 尚未接入。</p>
+        {warnings.map(w => <p role="alert" key={w}>{w}</p>)}
+        <button className="kl-secondary" disabled={busy || saving} onClick={() => { setSaving(true); setError(''); void post('/rebuild', {}).then(onRebuilt).catch(e => setError(e.message)).finally(() => setSaving(false)); }}>从资料文件重建索引</button>
+      </>}
+      {error && <p className="kl-settings-error" role="alert">{error}</p>}
+    </div>
+  </Dialog>;
 }
 
 function Dialog({ title, description, onClose, children }: { title: string; description: string; onClose: () => void; children: React.ReactNode }) {
