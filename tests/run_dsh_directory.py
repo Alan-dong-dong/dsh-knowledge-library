@@ -44,10 +44,11 @@ def run_host(restart=False):
                 raise RuntimeError('Isolated Harness not ready; inspect ' + str(log_path))
             if restart:
                 env['DSH_DIRECTORY_RESTART'] = '1'
-            result = subprocess.run([sys.executable, 'tests/dsh_directory.py'], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
-            (runtime / ('restart-test.log' if restart else 'test.log')).write_text(result.stdout, encoding='utf-8')
-            print(re.sub(r'(http://(?:127\.0\.0\.1|localhost):\d+)[^\s]*', r'\1/[redacted]', result.stdout), flush=True)
-            result.check_returncode()
+            for script in (['tests/dsh_directory.py'] if restart else ['tests/dsh_directory.py', 'tests/dsh_proxy.py']):
+                result = subprocess.run([sys.executable, script], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
+                (runtime / (('restart-' if restart else '') + Path(script).stem + '.log')).write_text(result.stdout, encoding='utf-8')
+                print(re.sub(r'(http://(?:127\.0\.0\.1|localhost):\d+)[^\s]*', r'\1/[redacted]', result.stdout), flush=True)
+                result.check_returncode()
         finally:
             if host.poll() is None:
                 if os.name == 'nt':

@@ -38,6 +38,7 @@ test('HTTP UI API persists captures, validates notes, updates metadata and rejec
     assert.equal((await request('/capture', { type: 'text', content: '' })).status, 400);
     assert.equal((await (await fetch(origin + API_PATH + '/settings')).json() as any).canChange, false);
     assert.equal((await request('/settings/root', { root: join(root, 'other'), expectedRoot: root })).status, 400);
+    assert.equal((await request('/settings/network', { allowProxyFakeIp: true, expected: false, expectedRoot: root })).status, 400);
     assert.equal((await (await fetch(origin + API_PATH + `/materials/${saved.material.id}/export`)).text()).includes('中文资料'), true);
   } finally {
     await queue.close(); library.close();

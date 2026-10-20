@@ -123,7 +123,11 @@ dsh --profile web --patch ./library.patch.yml
 
 ### 本机代理的 fake-IP DNS
 
-若网页采集提示检测到 `198.18.*`，且你确认本机正在使用 Clash/Mihomo 的 TUN fake-IP 模式，可以把 `allowProxyFakeIp` 设为 `true`。独立预览使用：
+若网页采集提示检测到 `198.18.*`，且你确认本机正在使用 Clash/Mihomo 的 TUN fake-IP 模式，可以把 `allowProxyFakeIp` 设为 `true`。
+
+GitHub 当前源码提供 **资料库设置 → 网页采集 → Clash/Mihomo 代理兼容（fake-IP）**：勾选后点击 **保存采集设置**，保存成功后重新采集失败任务。任务遇到 fake-IP 错误时，也可以直接点击 **代理兼容设置**进入；保存后会返回任务列表。仅勾选而不保存不会改变配置。此界面入口尚未发布到 npm；npm `0.1.1` 可在 Harness 插件配置中手动修改 `allowProxyFakeIp`，保留其他字段并重新加载插件。
+
+独立预览使用：
 
 ```powershell
 $env:KNOWLEDGE_LIBRARY_ALLOW_FAKE_IP = '1'
@@ -131,6 +135,8 @@ npm start
 ```
 
 此开关默认关闭，只放行**域名解析结果**中的 `198.18.0.0/15`。它不允许直接访问此范围的 IP URL，也不放开 `127.*`、`10.*`、`192.168.*` 等其他本机和内网地址。该模式依赖你对本机代理 DNS 的信任。本机公网采集验证在显式启用此开关后通过。
+
+兼容模式解决 fake-IP DNS 的访问限制，不保证站点本身可访问。微信公众号链接仍可能连接超时或要求浏览器验证；重试仍失败时，可以复制正文保存为文本，或导入本地 HTML。
 
 ## 对 Agent 说什么
 
@@ -216,6 +222,8 @@ npm run test:ui
 运行上述原生检查后，可以在同一隔离实例中执行 `python tests/dsh_style.py`。该检查要求宿主外观保持默认的“跟随系统”，会对比资料库与原生自动化任务页面的字体和按钮颜色，并验证深浅主题切换、弹窗、分类导航以及窄窗口布局。截图与报告保存在 `test-results/style-*`。
 
 `npm run test:dsh:directory` 会创建独立的 DSH profile 与资料目录，验证宿主目录浏览、取消选择、目标目录错误、插件加载失败回滚、切换后保留原资料，以及完整重启后的目录和资料持久化。测试使用网页内浏览方式，不会弹出系统选择窗口，也不会更改个人 Harness 配置；报告和截图位于 `test-results/directory-*`。
+
+该命令还执行 `tests/dsh_proxy.py`，验证代理兼容开关的手动保存、关闭、失败保留旧值、采集错误入口、返回重试与重启持久化。任务展示使用固定测试数据，配置保存调用真实 Harness 接口；报告和截图位于 `test-results/proxy-*`。
 
 源码分层：
 

@@ -26,7 +26,7 @@ export function apply(ctx: Context, config: Config) {
   ctx.inject(['webServer'], child => {
     child.effect(() => child.webServer.register({
       kind: 'prefix', path: API_PATH,
-      handler: createHandler(library, queue, () => child.webServer.getOrigin(), createDirectorySettings(ctx, library)),
+      handler: createHandler(library, queue, () => child.webServer.getOrigin(), createDirectorySettings(ctx, library, config)),
     }));
   });
   ctx.logger.info(`资料库已加载：${library.root}`);

@@ -41,6 +41,7 @@ with sync_playwright() as p:
             assert Path(stats()['root']) == target
             result = page.request.get(api + '/materials?query=新库验证').json()
             assert result['total'] == 1
+            assert page.request.get(api + '/settings').json()['allowProxyFakeIp'] is True
             print('PASS: selected library and saved materials survive full host restart.')
         else:
             initial = stats()['root']

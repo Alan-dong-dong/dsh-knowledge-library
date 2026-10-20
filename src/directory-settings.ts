@@ -4,16 +4,18 @@ import type {} from '@deepseek-ai/dsh-host-directory-picker';
 import type { DirectoryListing } from '@deepseek-ai/dsh-host-directory-picker';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { Library } from './core/library.js';
+import type { FetchPolicy } from './core/fetch.js';
 
 export type { DirectoryListing };
 export interface DirectorySettings {
-  status(): { canChange: boolean; picker: 'native' | 'browse' | null };
+  status(): { canChange: boolean; picker: 'native' | 'browse' | null; allowProxyFakeIp: boolean };
   pick(signal: AbortSignal): Promise<string | null>;
   list(path: string | undefined, signal: AbortSignal): Promise<DirectoryListing>;
   change(root: string, expectedRoot: string): Promise<string>;
+  setProxyMode(enabled: boolean, expected: boolean, expectedRoot: string): Promise<boolean>;
 }
 
-export function createDirectorySettings(ctx: Context, library: Library): DirectorySettings {
+export function createDirectorySettings(ctx: Context, library: Library, policy: FetchPolicy = {}): DirectorySettings {
   let changing = false;
   let picking = false;
   const editorEntry = () => {
@@ -25,7 +27,7 @@ export function createDirectorySettings(ctx: Context, library: Library): Directo
   return {
     status() {
       const kind = capability()?.kind;
-      return { canChange: !!editorEntry(), picker: kind === 'native' || kind === 'browse' ? kind : null };
+      return { canChange: !!editorEntry(), picker: kind === 'native' || kind === 'browse' ? kind : null, allowProxyFakeIp: policy.allowProxyFakeIp === true };
     },
     async pick(signal) {
       const picker = capability();
@@ -58,6 +60,21 @@ export function createDirectorySettings(ctx: Context, library: Library): Directo
         probe.close();
         await target.editor.edit(target.entry, current => ({ ...current, root: next }));
         return next;
+      } finally { changing = false; }
+    },
+    async setProxyMode(enabled, expected, expectedRoot) {
+      if (changing) throw new Error('正在保存资料库设置，请稍候');
+      if (expectedRoot !== library.root || expected !== (policy.allowProxyFakeIp === true)) throw new Error('资料库设置已改变，请重新打开设置后重试');
+      const target = editorEntry();
+      if (!target) throw new Error('当前环境无法保存插件配置，请在 Harness 中修改采集设置');
+      if (enabled === expected) return enabled;
+      changing = true;
+      try {
+        await target.editor.edit(target.entry, current => {
+          if ((current.allowProxyFakeIp === true) !== expected) throw new Error('代理兼容设置已改变，请重新打开设置后重试');
+          return { ...current, allowProxyFakeIp: enabled };
+        });
+        return enabled;
       } finally { changing = false; }
     },
   };

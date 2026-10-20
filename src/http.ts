@@ -5,6 +5,7 @@ import type { Library } from './core/library.js';
 import type { ImportQueue } from './core/jobs.js';
 import type { CaptureFields, Citation } from './types.js';
 import type { DirectorySettings } from './directory-settings.js';
+import type { FetchPolicy } from './core/fetch.js';
 
 export const API_PATH = '/knowledge-library/api';
 function send(res: ServerResponse, status: number, value: unknown) {
@@ -33,7 +34,7 @@ function fields(data: Record<string, any>): CaptureFields {
 }
 const localAddress = (address = '') => address === '::1' || address === '127.0.0.1' || address === '::ffff:127.0.0.1';
 
-export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string, directories?: DirectorySettings) {
+export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string, directories?: DirectorySettings, policy: FetchPolicy = {}) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const origin = getOrigin();
@@ -44,7 +45,7 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       const url = new URL(req.url || '/', origin);
       const path = url.pathname.slice(API_PATH.length);
       if (req.method === 'GET') {
-        if (path === '/settings') { send(res, 200, { root: library.root, ...(directories?.status() ?? { canChange: false, picker: null }) }); return; }
+        if (path === '/settings') { send(res, 200, { root: library.root, ...(directories?.status() ?? { canChange: false, picker: null, allowProxyFakeIp: policy.allowProxyFakeIp === true }) }); return; }
         if (path === '/stats') { send(res, 200, library.stats()); return; }
         if (path === '/materials') {
           send(res, 200, library.search({ ...Object.fromEntries(url.searchParams), limit: Number(url.searchParams.get('limit')) || 40, offset: Number(url.searchParams.get('offset')) || 0 })); return;
@@ -67,8 +68,13 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       if (req.method === 'POST' || req.method === 'PATCH') {
         if (req.headers['x-knowledge-library'] !== '1') { send(res, 403, { error: '缺少同源请求标记' }); return; }
         const data = await body(req);
-        if (req.method === 'POST' && ['/directory/pick', '/directory/list', '/settings/root'].includes(path)) {
-          if (!directories) throw new Error('请在 Harness 中选择和切换资料库目录');
+        if (req.method === 'POST' && ['/directory/pick', '/directory/list', '/settings/root', '/settings/network'].includes(path)) {
+          if (!directories) throw new Error('请在 Harness 中修改资料库设置');
+          if (path === '/settings/network') {
+            if (typeof data.allowProxyFakeIp !== 'boolean' || typeof data.expected !== 'boolean' || typeof data.expectedRoot !== 'string') throw new Error('代理兼容设置必须是布尔值，并提供当前资料库目录');
+            const allowProxyFakeIp = await directories.setProxyMode(data.allowProxyFakeIp, data.expected, data.expectedRoot);
+            send(res, 200, { allowProxyFakeIp }); return;
+          }
           if (path === '/settings/root') {
             if (typeof data.root !== 'string' || typeof data.expectedRoot !== 'string') throw new Error('资料库目录必须是字符串');
             const root = await directories.change(data.root, data.expectedRoot);

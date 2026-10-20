@@ -37,8 +37,9 @@ export interface FetchPolicy { allowProxyFakeIp?: boolean }
 export function permittedAddress(hostname: string, address: string, policy: FetchPolicy): boolean {
   if (isPublicAddress(address)) return true;
   // An explicit deployment opt-in for Clash/Mihomo TUN fake DNS, not a general private-network exemption.
-  return policy.allowProxyFakeIp === true && isIP(hostname) === 0
-    && hostname.includes('.') && !/\.(localhost|local|internal|lan)$/i.test(hostname)
+  const normalized = hostname.replace(/\.$/, '');
+  return policy.allowProxyFakeIp === true && isIP(address) === 4 && isIP(normalized) === 0
+    && normalized.includes('.') && !/\.(localhost|local|internal|lan)$/i.test(normalized)
     && /^198\.(18|19)\.\d{1,3}\.\d{1,3}$/.test(address);
 }
 export async function fetchPublicPage(input: string, signal?: AbortSignal, policy: FetchPolicy = {}): Promise<{ html: string; url: string }> {
@@ -50,7 +51,7 @@ export async function fetchPublicPage(input: string, signal?: AbortSignal, polic
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     const addresses = await lookup(hostname, { all: true });
     if (!addresses.length || addresses.some(item => !permittedAddress(hostname, item.address, policy))) {
-      if (addresses.some(item => /^198\.(18|19)\./.test(item.address))) throw new Error('检测到代理 fake-IP DNS。若本机使用 Clash/Mihomo TUN，请启用插件的 allowProxyFakeIp；否则请直接导入文本。');
+      if (addresses.some(item => /^198\.(18|19)\./.test(item.address))) throw new Error('检测到代理 fake-IP DNS。若本机使用 Clash/Mihomo TUN，请在资料库设置中启用“代理兼容”，然后重新采集；否则请复制正文导入。');
       throw new Error('网页采集不访问本机、内网或保留地址，请直接导入文件或文本');
     }
     const address = addresses[0];
@@ -71,7 +72,10 @@ export async function fetchPublicPage(input: string, signal?: AbortSignal, polic
         res.on('end', () => resolve({ status: res.statusCode ?? 0, location: res.headers.location, contentType: String(res.headers['content-type'] ?? ''), bytes: Buffer.concat(chunks) }));
         res.on('error', reject);
       });
-      req.on('error', reject);
+      req.on('error', error => {
+        if ((error as NodeJS.ErrnoException).code === 'ETIMEDOUT' || combined.reason?.name === 'TimeoutError') reject(new Error('网页连接超时，请检查网络或代理后重试，也可以复制正文导入。'));
+        else reject(error);
+      });
       req.end();
     });
     if ([301, 302, 303, 307, 308].includes(response.status) && response.location) {

@@ -94,6 +94,10 @@ test('reject traversal, invalid encoding, duplicate writers and unsafe network a
     assert.equal(permittedAddress('198.18.0.1', '198.18.0.1', { allowProxyFakeIp: true }), false);
     assert.equal(permittedAddress('router.local', '198.18.0.1', { allowProxyFakeIp: true }), false);
     assert.equal(permittedAddress('example.com', '192.168.0.1', { allowProxyFakeIp: true }), false);
+    assert.equal(permittedAddress('example.com', '198.19.255.254', { allowProxyFakeIp: true }), true);
+    assert.equal(permittedAddress('example.com', '198.18.999.1', { allowProxyFakeIp: true }), false);
+    for (const name of ['router.local.', 'server.internal.', 'service.lan.', 'app.localhost.']) assert.equal(permittedAddress(name, '198.18.0.1', { allowProxyFakeIp: true }), false, name);
+    for (const address of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '169.254.169.254', '::1', 'fc00::1']) assert.equal(permittedAddress('example.com', address, { allowProxyFakeIp: true }), false, address);
     await assert.rejects(fetchPublicPage('http://127.0.0.1'), /内网/);
   } finally { f.cleanup(); }
 });

@@ -35,6 +35,7 @@ export function App() {
   const [jobs, setJobs] = useState<ImportJob[]>([]);
   const [showJobs, setShowJobs] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [settingsFromJobs, setSettingsFromJobs] = useState(false);
   const [showNavigation, setShowNavigation] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -115,7 +116,7 @@ export function App() {
       </div>
       <div className="kl-toolbar"><label className="kl-search"><Icon name="search" size={19} /><input ref={searchRef} aria-label="搜索资料" placeholder="搜索正文、标题、标签…" value={query} onChange={e => { setQuery(e.target.value); setLimit(40); }} /><kbd>Ctrl K</kbd></label>
         <button aria-label={pending ? `采集任务，${pending} 项处理中` : '采集任务'} className={`kl-job-button ${pending ? 'has-jobs' : ''}`} onClick={() => setShowJobs(true)}><Icon name="clock" size={17} /><span>{pending ? `${pending} 项处理中` : '采集任务'}</span>{jobs.some(j => j.status === 'failed') && <i />}</button>
-        <button className="kl-icon-button" aria-label="资料库设置" title="资料库设置" onClick={() => setShowInfo(true)}><Icon name="settings" size={18} /></button>
+        <button className="kl-icon-button" aria-label="资料库设置" title="资料库设置" onClick={() => { setSettingsFromJobs(false); setShowInfo(true); }}><Icon name="settings" size={18} /></button>
       </div>
       {!!error && <div className="kl-error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
       <div className="kl-filterbar"><span><b>{total}</b> 份资料{query && ` · “${query}”`}</span><div><select aria-label="按类型筛选" value={filter.kind || ''} onChange={e => { setFilter({ ...filter, kind: e.target.value || undefined }); setLimit(40); }}><option value="">所有类型</option>{Object.entries(kinds).map(([value, kind]) => <option key={value} value={value}>{kind.label}</option>)}</select><span className="kl-sort-label">最近更新 ↓</span></div></div>
@@ -169,17 +170,18 @@ export function App() {
       else { setShowJobs(true); notify('网页已加入采集队列'); }
     }} />}
     {showJobs && <Dialog title="采集任务" description="网页在后台提取正文。关闭应用后，下次启动会恢复未完成任务。" onClose={() => setShowJobs(false)}>
-      <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}><div><span className={`kl-job-status ${job.status}`}>{({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div><strong>{job.url}</strong>{job.error && <p role={job.status === 'failed' ? 'alert' : undefined}>{job.error}</p>}<div>{job.materialId && <button onClick={() => { setSelected(job.materialId); setShowJobs(false); refresh(); }}>查看资料 <Icon name="arrow" size={14} /></button>}{job.status === 'failed' && <button onClick={() => void post(`/jobs/${job.id}/retry`, {}).then(refresh).catch(e => setError(e.message))}>重新采集</button>}</div></div>)}</div>
+      <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}><div><span className={`kl-job-status ${job.status}`}>{({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div><strong>{job.url}</strong>{job.error && <p role={job.status === 'failed' ? 'alert' : undefined}>{job.error}</p>}<div>{job.materialId && <button onClick={() => { setSelected(job.materialId); setShowJobs(false); refresh(); }}>查看资料 <Icon name="arrow" size={14} /></button>}{job.status === 'failed' && <>{/fake-ip/i.test(job.error || '') && <button onClick={() => { setShowJobs(false); setSettingsFromJobs(true); setShowInfo(true); }}>代理兼容设置</button>}<button onClick={() => void post(`/jobs/${job.id}/retry`, {}).then(refresh).catch(e => setError(e.message))}>重新采集</button></>}</div></div>)}</div>
     </Dialog>}
-    {showInfo && <SettingsDialog root={stats?.root || ''} warnings={stats?.warnings || []} onClose={() => setShowInfo(false)} onChanged={() => {
+    {showInfo && <SettingsDialog root={stats?.root || ''} warnings={stats?.warnings || []} onClose={() => { setShowInfo(false); if (settingsFromJobs) setShowJobs(true); setSettingsFromJobs(false); }} onChanged={() => {
       setSelected(undefined); setDetail(undefined); setAnchor(undefined); setItems([]); setQuery(''); chooseFilter({}); refresh(); notify('资料库目录已切换');
-    }} onRebuilt={() => { refresh(); notify('索引已重建'); }} />}
+    }} onRebuilt={() => { refresh(); notify('索引已重建'); }} onProxySaved={enabled => { refresh(); notify(enabled ? '代理兼容已开启，可重新采集失败任务' : '代理兼容已关闭'); if (settingsFromJobs) { setShowInfo(false); setShowJobs(true); setSettingsFromJobs(false); } }} />}
     {toast && <div className="kl-toast" role="status"><Icon name="check" size={17} />{toast}</div>}
   </div>;
 }
 
-function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt }: { root: string; warnings: string[]; onClose: () => void; onChanged: () => void; onRebuilt: () => void }) {
-  const [settings, setSettings] = useState<{ canChange: boolean; picker: 'native' | 'browse' | null }>();
+function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt, onProxySaved }: { root: string; warnings: string[]; onClose: () => void; onChanged: () => void; onRebuilt: () => void; onProxySaved: (enabled: boolean) => void }) {
+  const [settings, setSettings] = useState<{ canChange: boolean; picker: 'native' | 'browse' | null; allowProxyFakeIp: boolean }>();
+  const [proxyMode, setProxyMode] = useState(false);
   const [target, setTarget] = useState(root);
   const [listing, setListing] = useState<DirectoryListing>();
   const [browsePath, setBrowsePath] = useState('');
@@ -188,7 +190,7 @@ function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt }: { roo
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const request = useRef<AbortController>();
-  useEffect(() => { const abort = new AbortController(); void api('/settings', { signal: abort.signal }).then(setSettings).catch(e => { if (!abort.signal.aborted) setError(e.message); }); return () => { abort.abort(); request.current?.abort(); }; }, []);
+  useEffect(() => { const abort = new AbortController(); void api('/settings', { signal: abort.signal }).then(data => { setSettings(data); setProxyMode(data.allowProxyFakeIp === true); }).catch(e => { if (!abort.signal.aborted) setError(e.message); }); return () => { abort.abort(); request.current?.abort(); }; }, []);
   useEffect(() => { setTarget(root); }, [root]);
   async function browse(path?: string) {
     request.current?.abort(); const abort = new AbortController(); request.current = abort;
@@ -210,6 +212,15 @@ function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt }: { roo
     catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
   }
+  async function saveProxyMode() {
+    if (!settings) return;
+    setSaving(true); setError('');
+    try {
+      const result = await post<{ allowProxyFakeIp: boolean }>('/settings/network', { allowProxyFakeIp: proxyMode, expected: settings.allowProxyFakeIp, expectedRoot: root });
+      setSettings({ ...settings, allowProxyFakeIp: result.allowProxyFakeIp }); setProxyMode(result.allowProxyFakeIp); onProxySaved(result.allowProxyFakeIp);
+    } catch (e) { setError((e as Error).message); }
+    finally { setSaving(false); }
+  }
   const changed = target.trim() && target.trim() !== root;
   return <Dialog title="你的资料，由你保管" description="内容以普通文件保存，索引可以重建。" onClose={() => { if (!saving) onClose(); }}>
     <div className="kl-info">
@@ -225,6 +236,7 @@ function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt }: { roo
         <div className="kl-root-field"><input id="kl-library-root" value={target} title={target} spellCheck={false} readOnly={!settings?.canChange} disabled={saving || busy} onChange={e => setTarget(e.target.value)} /><button className="kl-secondary" disabled={!settings?.canChange || !settings.picker || busy || saving} onClick={() => void pick()}><Icon name="folder" size={16} />{busy ? '选择中…' : '选择目录'}</button></div>
         {settings && !settings.canChange && <p className="kl-muted">请在 Harness 中选择和切换目录；独立预览可通过启动配置指定目录。</p>}
         {!!changed && <div className="kl-root-confirm"><p>切换后将读取新目录，并将后续资料保存到那里。原目录的资料会保留，不会自动搬迁。</p><div><button className="kl-secondary" disabled={saving || busy} onClick={() => { setTarget(root); setError(''); }}>取消修改</button><button className="kl-primary" disabled={saving || busy} onClick={() => void change()}>{saving ? '正在切换…' : '切换资料库'}</button></div></div>}
+        <section className="kl-network-settings" aria-label="网页采集设置"><h3>网页采集</h3><label className="kl-proxy-option"><input type="checkbox" aria-describedby="kl-proxy-help" checked={proxyMode} disabled={!settings?.canChange || saving || busy} onChange={e => { setProxyMode(e.target.checked); setError(''); }} /><span>Clash/Mihomo 代理兼容（fake-IP）</span></label><p id="kl-proxy-help">本机使用 Clash/Mihomo TUN 的 fake-IP DNS 时开启，允许通过代理采集解析到 198.18.* 或 198.19.* 的网站。本机及其他内网地址仍不允许访问。</p>{settings && !settings.canChange && <p className="kl-muted">独立预览的代理兼容模式由启动配置决定。</p>}{settings?.canChange && proxyMode !== settings.allowProxyFakeIp && <button className="kl-secondary" disabled={saving || busy} onClick={() => void saveProxyMode()}>{saving ? '正在保存…' : '保存采集设置'}</button>}</section>
         <p>每份资料保留原始文件、正文、元数据和引用段落。分类对应本地文件夹，插件卸载不会删除这些文件。</p><p>本版本可提取文章正文及字幕；音视频、PDF 等格式可以归档，自动转写和 OCR 尚未接入。</p>
         {warnings.map(w => <p role="alert" key={w}>{w}</p>)}
         <button className="kl-secondary" disabled={busy || saving} onClick={() => { setSaving(true); setError(''); void post('/rebuild', {}).then(onRebuilt).catch(e => setError(e.message)).finally(() => setSaving(false)); }}>从资料文件重建索引</button>

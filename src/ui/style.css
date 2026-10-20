@@ -229,6 +229,11 @@
 .kl-folder-entries > p { padding: 0 10px; }
 .kl-folder-actions { margin-top: 16px; }
 .kl-info .kl-settings-error { color: var(--kl-error); overflow-wrap: anywhere; }
+.kl-network-settings { margin-top: 20px; padding-top: 16px; border-top: .5px solid var(--kl-line); }
+.kl-network-settings h3 { font-size: 13px; font-weight: 500; margin: 0 0 12px; }
+.kl-info .kl-proxy-option { display: flex; align-items: flex-start; gap: 8px; color: var(--kl-ink); font-size: 13px; line-height: 20px; cursor: pointer; }
+.kl-proxy-option input { flex: none; width: 16px; height: 16px; margin: 2px 0; accent-color: var(--kl-ink); }
+.kl-network-settings p { font-size: 12px; margin: 8px 0 12px; }
 .kl-error, .kl-form-error { background: var(--kl-sidebar); color: var(--kl-error); font-size: 13px; line-height: 1.7; padding: 10px 12px; border-radius: 8px; overflow-wrap: anywhere; }
 .kl-error { display: flex; align-items: center; gap: 12px; margin: 0 var(--kl-gutter) 14px; }
 .kl-error button { margin-left: auto; border: 0; background: transparent; color: inherit; display: flex; padding: 4px; }

@@ -63,7 +63,7 @@ test('host chooser cancellation is read-only, prevents duplicate dialogs and pas
   const ctx = { get: (name: string) => name === 'directoryPicker' ? { capability: () => picker } : undefined } as unknown as Context;
   const settings = createDirectorySettings(ctx, library);
   try {
-    assert.deepEqual(settings.status(), { canChange: false, picker: 'native' });
+    assert.deepEqual(settings.status(), { canChange: false, picker: 'native', allowProxyFakeIp: false });
     const pending = settings.pick(new AbortController().signal);
     await assert.rejects(settings.pick(new AbortController().signal), /已打开/);
     done(null); assert.equal(await pending, null);
@@ -72,5 +72,37 @@ test('host chooser cancellation is read-only, prevents duplicate dialogs and pas
     assert.equal(await settings.list(temp, new AbortController().signal), listing);
     await assert.rejects(settings.pick(new AbortController().signal), /不支持/);
     await assert.rejects(settings.change(join(temp, '..', 'elsewhere'), temp), /无法保存/);
+  } finally { library.close(); rmSync(temp, { recursive: true, force: true }); }
+});
+
+test('proxy mode is opt-in, preserves the root, rejects stale changes and leaves config intact on failure', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'dsh-proxy-test-'));
+  const library = new Library(temp);
+  const fiber = {};
+  const entry = { fiber };
+  let config = { root: library.root, allowProxyFakeIp: false };
+  let fail = false;
+  const editor = { entries: () => [entry], edit: async (_entry: unknown, change: (value: typeof config) => typeof config) => {
+    if (fail) throw new Error('cannot persist');
+    config = change(config);
+  } };
+  const ctx = { fiber, get: (name: string) => name === 'configEditor' ? editor : undefined } as unknown as Context;
+  try {
+    let settings = createDirectorySettings(ctx, library, config);
+    assert.equal(settings.status().allowProxyFakeIp, false);
+    await assert.rejects(settings.setProxyMode(true, false, 'stale-root'), /已改变/);
+    await settings.setProxyMode(true, false, library.root);
+    assert.deepEqual(config, { root: library.root, allowProxyFakeIp: true });
+    settings = createDirectorySettings(ctx, library, config);
+    assert.equal(settings.status().allowProxyFakeIp, true);
+    await assert.rejects(settings.setProxyMode(false, false, library.root), /已改变/);
+    fail = true;
+    await assert.rejects(settings.setProxyMode(false, true, library.root), /cannot persist/);
+    assert.equal(config.allowProxyFakeIp, true);
+    fail = false;
+    await settings.setProxyMode(false, true, library.root);
+    assert.deepEqual(config, { root: library.root, allowProxyFakeIp: false });
+    const preview = createDirectorySettings({ get: () => undefined } as unknown as Context, library);
+    await assert.rejects(preview.setProxyMode(true, false, library.root), /无法保存/);
   } finally { library.close(); rmSync(temp, { recursive: true, force: true }); }
 });
