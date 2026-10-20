@@ -2,9 +2,9 @@
 
 本地优先的 DeepSeek Harness 资料库插件。把网页、文字、文件和视频字幕保存到自己的电脑，按分类与专题整理，再让 Agent 检索、引用并形成知识笔记。
 
-[下载 v0.1.0](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/tag/v0.1.0) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Alan-dong-dong/dsh-knowledge-library/issues) · [MIT](LICENSE)
+[npm](https://www.npmjs.com/package/dsh-knowledge-library) · [下载 v0.1.0](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/tag/v0.1.0) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Alan-dong-dong/dsh-knowledge-library/issues) · [MIT](LICENSE)
 
-这是社区插件，与 DeepSeek 官方没有隶属关系。插件已声明 dsh 原生加载配置，通过 `dsh plugin add` 安装后自动加载，无需另行注册账号或申请插件 ID。当前通过 GitHub Release 分发，尚未发布到 npm，也不代表已收录进官方或第三方插件目录。
+这是社区插件，与 DeepSeek 官方没有隶属关系。插件已声明 dsh 原生加载配置，通过 `dsh plugin add` 安装后自动加载，无需另行注册账号或申请插件 ID。插件通过 npm 和 GitHub Release 分发；发布到 npm 不代表已收录进官方或第三方插件目录。
 
 **兼容基线：DeepSeek Harness `0.2.1-rc.2`、Cordis `4.0.5`、Node.js `22.23.0`。**
 使用 Node 内置 SQLite，最低要求 Node `22.13.0`。DSH 仍处于预览阶段，其他版本需要重新验证。原生界面已针对 **本机 DSH Web** 验证；桌面发行版、远程部署尚未验证，不能直接视为兼容。
@@ -31,13 +31,19 @@
 
 ## 安装到 dsh
 
-先安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，确保终端可以运行 `dsh`。在 PowerShell 或其他终端执行下面这条命令，下载并安装**已经构建好的**插件，不需要克隆源码、安装 GitHub CLI 或注册 npm 账号：
+先安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，确保终端可以运行 `dsh`。在 PowerShell 或其他终端执行下面这条命令，从 npm 下载并安装**已经构建好的**插件，不需要克隆源码、安装 GitHub CLI 或注册 npm 账号：
+
+```powershell
+dsh plugin --profile web add dsh-knowledge-library@0.1.0 --registry=https://registry.npmjs.org/
+```
+
+重启 DSH Web，再在浏览器中按 `Ctrl+Shift+R` 刷新，点击侧栏 **资料库**。界面与 Agent 工具共享同一份本地资料。示例安装到 `web` profile；如果你实际使用其他 profile，请先确认宿主版本与界面兼容性后替换。已验证的宿主为 `0.2.1-rc.2`。
+
+也可以安装 GitHub Release 中的同一版本：
 
 ```powershell
 dsh plugin --profile web add "https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/download/v0.1.0/dsh-knowledge-library-0.1.0.tgz" --registry=https://registry.npmjs.org/
 ```
-
-重启 DSH Web，再在浏览器中按 `Ctrl+Shift+R` 刷新，点击侧栏 **资料库**。界面与 Agent 工具共享同一份本地资料。示例安装到 `web` profile；如果你实际使用其他 profile，请先确认宿主版本与界面兼容性后替换。已验证的宿主为 `0.2.1-rc.2`。
 
 如果终端无法直接下载 GitHub 地址，可以从 [Releases](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases) 下载 `.tgz` 与 `SHA256SUMS`，然后安装本地包：
 
@@ -47,7 +53,7 @@ Get-FileHash 'D:/下载/dsh-knowledge-library-0.1.0.tgz' -Algorithm SHA256
 dsh plugin --profile web add "D:/完整路径/dsh-knowledge-library-0.1.0.tgz"
 ```
 
-安装过程中仍需从 npm 下载运行依赖。插件包含 `dsh.bundle.patch` 配置和符合 dsh lazy-CJS 协议的客户端入口。更新时安装新 Release 的版本化 `.tgz` 地址，再重启宿主。卸载可执行 `dsh plugin --profile web remove dsh-knowledge-library`；已保存的资料保留在独立资料目录。
+安装过程中仍需从 npm 下载运行依赖。插件包含 `dsh.bundle.patch` 配置和符合 dsh lazy-CJS 协议的客户端入口。更新时将安装命令中的版本号替换为新版本，或安装新 Release 的版本化 `.tgz` 地址，再重启宿主。卸载可执行 `dsh plugin --profile web remove dsh-knowledge-library`；已保存的资料保留在独立资料目录。
 
 如果安装后没有入口，先确认安装的 profile 与启动的 profile 相同，重启并刷新，再用 `dsh --profile web --dump-config` 检查是否存在启用的 `knowledge-library`。网页采集遇到代理 fake-IP 提示时，参见下方配置。
 
