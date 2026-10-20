@@ -3,7 +3,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 await mkdir('dist/public', { recursive: true });
 const css = await readFile('src/ui/style.css', 'utf8');
 await writeFile('dist/public/app.css', css);
-await writeFile('dist/public/index.html', '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>拾页 · 本地资料库</title><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>');
+await writeFile('dist/public/index.html', '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>拾页 · 本地资料库</title><link rel="stylesheet" href="/app.css"></head><body class="kl-preview"><div id="root"></div><script src="/app.js"></script></body></html>');
 await build({ entryPoints: ['src/ui/main.tsx'], outfile: 'dist/public/app.js', bundle: true, format: 'iife', minify: true, define: { 'process.env.NODE_ENV': '"production"' } });
 const client = await build({
   entryPoints: ['src/client.tsx'], bundle: true, format: 'cjs', platform: 'browser', write: false,

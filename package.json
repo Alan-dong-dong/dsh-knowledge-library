@@ -1,6 +1,6 @@
 {
   "name": "dsh-knowledge-library",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "本地优先的 DeepSeek Harness 资料库：采集、分类、检索与可追溯知识笔记",
   "type": "module",
   "license": "MIT",

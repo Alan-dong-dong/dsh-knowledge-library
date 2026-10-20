@@ -34,6 +34,7 @@ export function App() {
   const [jobs, setJobs] = useState<ImportJob[]>([]);
   const [showJobs, setShowJobs] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [showNavigation, setShowNavigation] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(true);
@@ -44,7 +45,7 @@ export function App() {
   const detailRef = useRef<HTMLElement>(null);
   const refresh = useCallback(() => setRevision(v => v + 1), []);
   const notify = (message: string) => setToast(message);
-  const chooseFilter = (next: Filter) => { setFilter(next); setLimit(40); setSelected(undefined); setAnchor(undefined); setDetail(undefined); };
+  const chooseFilter = (next: Filter) => { setFilter(next); setLimit(40); setSelected(undefined); setAnchor(undefined); setDetail(undefined); setShowNavigation(false); };
   const refreshMeta = useCallback(async () => {
     const [s, j] = await Promise.all([api<Stats>('/stats'), api<ImportJob[]>('/jobs')]);
     setStats(s); setJobs(j);
@@ -101,37 +102,40 @@ export function App() {
   }
   const currentTitle = filter.category || filter.collection || (filter.tag ? `标签 · ${filter.tag}` : filter.kind === 'note' ? '知识笔记' : '全部资料');
   return <div className="kl-app">
-    <aside className="kl-nav">
-      <div className="kl-brand"><span className="kl-mark"><Icon name="library" size={24} /></span><div><strong>拾页</strong><span>本地资料库</span></div><span className="kl-version">01</span></div>
-      <button className="kl-primary kl-add" onClick={() => setEditor({ mode: 'capture' })}><Icon name="plus" size={18} />收集资料</button>
-      <nav aria-label="资料导航">
-        <button className={!Object.values(filter).some(Boolean) ? 'active' : ''} onClick={() => chooseFilter({})}><Icon name="library" size={18} /><span>全部资料</span><small>{stats?.total ?? '—'}</small></button>
-        <button className={filter.category === '收件箱' ? 'active' : ''} onClick={() => chooseFilter({ category: '收件箱' })}><Icon name="inbox" size={18} /><span>收件箱</span><small>{stats?.inbox ?? '—'}</small></button>
-        <button className={filter.kind === 'note' ? 'active' : ''} onClick={() => chooseFilter({ kind: 'note' })}><Icon name="note" size={18} /><span>知识笔记</span><small>{stats?.notes ?? '—'}</small></button>
-      </nav>
-      <div className="kl-nav-section"><div className="kl-nav-label">分类 <span>按主题归档</span></div>
-        {stats?.categories.filter(c => c.name !== '收件箱').map(c => <button key={c.name} className={`kl-nav-row ${filter.category === c.name ? 'active' : ''}`} onClick={() => chooseFilter({ category: c.name })}><Icon name="folder" size={16} /><span title={c.name}>{c.name}</span><small>{c.count}</small></button>)}
-        {!stats?.categories.some(c => c.name !== '收件箱') && <p className="kl-nav-hint">收集时填写分类，<br />在这里找到它们。</p>}
-      </div>
-      <div className="kl-nav-section"><div className="kl-nav-label">专题 <span>围绕一个问题</span></div>
-        {stats?.collections.map(c => <button key={c.name} className={`kl-nav-row ${filter.collection === c.name ? 'active' : ''}`} onClick={() => chooseFilter({ collection: c.name })}><span className="kl-collection-dot" /><span>{c.name}</span><small>{c.count}</small></button>)}
-        {!stats?.collections.length && <p className="kl-nav-hint">把不同来源放进同一专题。</p>}
-      </div>
-      {!!stats?.tags.length && <div className="kl-nav-section"><div className="kl-nav-label">标签</div><div className="kl-tag-cloud">{stats.tags.slice(0, 15).map(tag => <button className={filter.tag === tag.name ? 'active' : ''} key={tag.name} onClick={() => chooseFilter({ tag: tag.name })}>#{tag.name}</button>)}</div></div>}
-      <div className="kl-nav-bottom"><button onClick={() => setShowInfo(true)}><span className="kl-live-dot" /><span>保存在这台电脑</span><Icon name="settings" size={16} /></button><p>来源可追溯 · 内容可带走</p></div>
-    </aside>
     <main className="kl-workspace">
-      <header className="kl-header"><div><div className="kl-eyebrow">COLLECT / CONNECT / UNDERSTAND</div><h1>{currentTitle}</h1><p>留住值得再读的内容，让每一次思考都有出处。</p></div><button className="kl-secondary" onClick={() => setEditor({ mode: 'note' })}><Icon name="note" size={17} />写笔记</button></header>
+      <header className="kl-header"><h1>{currentTitle}</h1><div className="kl-header-actions"><button className="kl-secondary" onClick={() => setEditor({ mode: 'note' })}><Icon name="note" size={16} />写笔记</button><button className="kl-primary" onClick={() => setEditor({ mode: 'capture' })}><Icon name="plus" size={16} />收集资料</button></div></header>
+      <div className="kl-navigation">
+        <nav aria-label="资料导航">
+          <button aria-pressed={!Object.values(filter).some(Boolean)} onClick={() => chooseFilter({})}>全部资料</button>
+          <button aria-pressed={filter.category === '收件箱'} onClick={() => chooseFilter({ category: '收件箱' })}>收件箱</button>
+          <button aria-pressed={filter.kind === 'note'} onClick={() => chooseFilter({ kind: 'note' })}>知识笔记</button>
+        </nav>
+        <button className="kl-directory-toggle" aria-expanded={showNavigation} aria-controls="kl-directory" onClick={() => setShowNavigation(v => !v)}><Icon name="folder" size={16} />分类与专题</button>
+      </div>
       <div className="kl-toolbar"><label className="kl-search"><Icon name="search" size={19} /><input ref={searchRef} aria-label="搜索资料" placeholder="搜索正文、标题、标签…" value={query} onChange={e => { setQuery(e.target.value); setLimit(40); }} /><kbd>Ctrl K</kbd></label>
-        <button className={`kl-job-button ${pending ? 'has-jobs' : ''}`} onClick={() => setShowJobs(true)}><Icon name="clock" size={17} /><span>{pending ? `${pending} 项处理中` : '采集任务'}</span>{jobs.some(j => j.status === 'failed') && <i />}</button>
+        <button aria-label={pending ? `采集任务，${pending} 项处理中` : '采集任务'} className={`kl-job-button ${pending ? 'has-jobs' : ''}`} onClick={() => setShowJobs(true)}><Icon name="clock" size={17} /><span>{pending ? `${pending} 项处理中` : '采集任务'}</span>{jobs.some(j => j.status === 'failed') && <i />}</button>
+        <button className="kl-icon-button" aria-label="资料库设置" title="资料库设置" onClick={() => setShowInfo(true)}><Icon name="settings" size={18} /></button>
       </div>
       {!!error && <div className="kl-error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
       <div className="kl-filterbar"><span><b>{total}</b> 份资料{query && ` · “${query}”`}</span><div><select aria-label="按类型筛选" value={filter.kind || ''} onChange={e => { setFilter({ ...filter, kind: e.target.value || undefined }); setLimit(40); }}><option value="">所有类型</option>{Object.entries(kinds).map(([value, kind]) => <option key={value} value={value}>{kind.label}</option>)}</select><span className="kl-sort-label">最近更新 ↓</span></div></div>
       <div className={`kl-body ${detail || detailLoading ? 'with-detail' : ''}`}>
+        {showNavigation && <aside className="kl-nav" id="kl-directory" aria-label="分类与专题">
+          <div className="kl-directory-title"><span>分类与专题</span><button className="kl-icon-button" aria-label="关闭分类导航" onClick={() => setShowNavigation(false)}><Icon name="close" size={16} /></button></div>
+          <div className="kl-nav-section"><div className="kl-nav-label">分类</div>
+            {stats?.categories.filter(c => c.name !== '收件箱').map(c => <button key={c.name} aria-pressed={filter.category === c.name} className="kl-nav-row" onClick={() => chooseFilter({ category: c.name })}><Icon name="folder" size={16} /><span title={c.name}>{c.name}</span><small>{c.count}</small></button>)}
+            {!stats?.categories.some(c => c.name !== '收件箱') && <p className="kl-nav-hint">收集资料时添加分类</p>}
+          </div>
+          <div className="kl-nav-section"><div className="kl-nav-label">专题</div>
+            {stats?.collections.map(c => <button key={c.name} aria-pressed={filter.collection === c.name} className="kl-nav-row" onClick={() => chooseFilter({ collection: c.name })}><span className="kl-collection-dot" /><span title={c.name}>{c.name}</span><small>{c.count}</small></button>)}
+            {!stats?.collections.length && <p className="kl-nav-hint">收集资料时添加专题</p>}
+          </div>
+          {!!stats?.tags.length && <div className="kl-nav-section"><div className="kl-nav-label">标签</div><div className="kl-tag-cloud">{stats.tags.slice(0, 15).map(tag => <button aria-pressed={filter.tag === tag.name} key={tag.name} onClick={() => chooseFilter({ tag: tag.name })}>#{tag.name}</button>)}</div></div>}
+          <div className="kl-nav-bottom"><span className="kl-live-dot" />保存在这台电脑</div>
+        </aside>}
         <section className="kl-list" aria-label="资料列表" aria-busy={loading}>
           {loading && !items.length ? <div className="kl-empty"><span className="kl-spinner" />正在读取资料库…</div> : !items.length ? <div className="kl-empty">
-            <div className="kl-empty-art"><span /><Icon name="file" size={46} /><span /></div><h2>{query || Object.values(filter).some(Boolean) ? '这里还没有匹配的资料' : '从第一份值得保存的资料开始'}</h2>
-            <p>{query ? '试试更短的关键词，或切换分类。' : '一篇网页、一段摘录，或一份视频字幕。'}</p><button className="kl-secondary" onClick={() => query || Object.values(filter).some(Boolean) ? (setQuery(''), chooseFilter({})) : setEditor({ mode: 'capture' })}>{query || Object.values(filter).some(Boolean) ? '查看全部资料' : '收集第一份资料'}<Icon name="arrow" size={16} /></button>
+            <Icon name="inbox" size={28} /><h2>{query || Object.values(filter).some(Boolean) ? '没有找到匹配的资料' : '还没有资料，收集的内容会显示在这里'}</h2>
+            {query && <p>试试其他关键词，或切换分类。</p>}<button className="kl-secondary" onClick={() => query || Object.values(filter).some(Boolean) ? (setQuery(''), chooseFilter({})) : setEditor({ mode: 'capture' })}>{query || Object.values(filter).some(Boolean) ? '查看全部资料' : '收集第一份资料'}</button>
           </div> : items.map(item => <button className={`kl-item ${selected === item.id ? 'selected' : ''}`} key={item.id} onClick={() => { setAnchor(undefined); setSelected(item.id); }}>
             <div className="kl-item-top"><span className={`kl-type kl-type-${item.kind}`}><Icon name={kinds[item.kind].icon} size={15} />{kinds[item.kind].label}</span><time>{date(item.createdAt)}</time></div>
             <h2>{item.title}</h2><p>{item.excerpt || item.extraction}</p>
@@ -139,7 +143,6 @@ export function App() {
           </button>)}
           {items.length < total && <button className="kl-load-more" onClick={() => setLimit(v => Math.min(100, v + 40))} disabled={limit >= 100}>{limit >= 100 ? '请缩小搜索范围（最多显示 100 条）' : '加载更多'}</button>}
         </section>
-        {!selected && !!items.length && <aside className="kl-reading-placeholder"><div className="kl-placeholder-number">拾 / 页</div><h2>收集之后，<br />给知识一点生长的空间。</h2><p>选择一份资料开始阅读。<br />摘录、关联，再交给 Agent 深入分析。</p><div><span>{stats?.ready ?? 0}<small>可检索资料</small></span><span>{stats?.notes ?? 0}<small>知识笔记</small></span></div></aside>}
         {selected && <section className="kl-detail" aria-label="资料详情" ref={detailRef}>
           <div className="kl-detail-toolbar"><button className="kl-back" onClick={() => { setSelected(undefined); setDetail(undefined); }}><Icon name="close" size={18} /><span>关闭阅读</span></button>{detail && <div><button title="复制资料引用" aria-label="复制资料引用" onClick={() => void copy(`library://${detail.id}`)}><Icon name="copy" size={17} /></button><a title="导出 Markdown" aria-label="导出 Markdown" href={`${API}/materials/${detail.id}/export`}><Icon name="download" size={17} /></a><button onClick={() => setEditor({ mode: 'edit', source: detail })}>编辑信息</button></div>}</div>
           {detailLoading ? <div className="kl-empty"><span className="kl-spinner" />读取中…</div> : detail && <article>

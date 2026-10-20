@@ -2,7 +2,7 @@
 
 本地优先的 DeepSeek Harness 资料库插件。把网页、文字、文件和视频字幕保存到自己的电脑，按分类与专题整理，再让 Agent 检索、引用并形成知识笔记。
 
-[npm](https://www.npmjs.com/package/dsh-knowledge-library) · [下载 v0.1.0](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/tag/v0.1.0) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Alan-dong-dong/dsh-knowledge-library/issues) · [MIT](LICENSE)
+[npm](https://www.npmjs.com/package/dsh-knowledge-library) · [下载 v0.1.1](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/tag/v0.1.1) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Alan-dong-dong/dsh-knowledge-library/issues) · [MIT](LICENSE)
 
 这是社区插件，与 DeepSeek 官方没有隶属关系。插件已声明 dsh 原生加载配置，通过 `dsh plugin add` 安装后自动加载，无需另行注册账号或申请插件 ID。插件通过 npm 和 GitHub Release 分发；发布到 npm 不代表已收录进官方或第三方插件目录。
 
@@ -11,7 +11,7 @@
 
 ## 已实现
 
-- dsh 原生侧栏「资料库」与中文三栏阅读界面。
+- dsh 原生侧栏「资料库」，跟随宿主深浅主题、字体与按钮样式，支持窄窗口阅读。
 - 网页正文提取、原始 HTML 保存、来源地址与作者记录。
 - 文本 / Markdown 收集；UTF-8 文本、HTML、SRT、VTT 文件导入。
 - 视频、音频、PDF 等文件原样归档，并明确标记「仅归档」。
@@ -25,7 +25,9 @@
 
 本插件不主动调用模型、上传资料或监听剪贴板。Agent 读取资料后，所读内容会进入该会话配置的模型上下文；如果模型在云端，相应内容会发送到模型服务商。
 
-![本机 DSH Web 中的拾页资料库](assets/screenshots/dsh-library.png)
+![本机 DSH Web 中的拾页资料库（浅色）](https://raw.githubusercontent.com/Alan-dong-dong/dsh-knowledge-library/v0.1.1/assets/screenshots/dsh-library.png)
+
+![本机 DSH Web 中的拾页资料库（深色）](https://raw.githubusercontent.com/Alan-dong-dong/dsh-knowledge-library/v0.1.1/assets/screenshots/dsh-library-dark.png)
 
 截图来自隔离的 DSH Web 测试实例，使用测试资料。
 
@@ -34,7 +36,7 @@
 先安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，确保终端可以运行 `dsh`。在 PowerShell 或其他终端执行下面这条命令，从 npm 下载并安装**已经构建好的**插件，不需要克隆源码、安装 GitHub CLI 或注册 npm 账号：
 
 ```powershell
-dsh plugin --profile web add dsh-knowledge-library@0.1.0 --registry=https://registry.npmjs.org/
+dsh plugin --profile web add dsh-knowledge-library@0.1.1 --registry=https://registry.npmjs.org/
 ```
 
 重启 DSH Web，再在浏览器中按 `Ctrl+Shift+R` 刷新，点击侧栏 **资料库**。界面与 Agent 工具共享同一份本地资料。示例安装到 `web` profile；如果你实际使用其他 profile，请先确认宿主版本与界面兼容性后替换。已验证的宿主为 `0.2.1-rc.2`。
@@ -42,15 +44,15 @@ dsh plugin --profile web add dsh-knowledge-library@0.1.0 --registry=https://regi
 也可以安装 GitHub Release 中的同一版本：
 
 ```powershell
-dsh plugin --profile web add "https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/download/v0.1.0/dsh-knowledge-library-0.1.0.tgz" --registry=https://registry.npmjs.org/
+dsh plugin --profile web add "https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/download/v0.1.1/dsh-knowledge-library-0.1.1.tgz" --registry=https://registry.npmjs.org/
 ```
 
 如果终端无法直接下载 GitHub 地址，可以从 [Releases](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases) 下载 `.tgz` 与 `SHA256SUMS`，然后安装本地包：
 
 ```powershell
 # 将输出与 SHA256SUMS 中的值比较。
-Get-FileHash 'D:/下载/dsh-knowledge-library-0.1.0.tgz' -Algorithm SHA256
-dsh plugin --profile web add "D:/完整路径/dsh-knowledge-library-0.1.0.tgz"
+Get-FileHash 'D:/下载/dsh-knowledge-library-0.1.1.tgz' -Algorithm SHA256
+dsh plugin --profile web add "D:/完整路径/dsh-knowledge-library-0.1.1.tgz"
 ```
 
 安装过程中仍需从 npm 下载运行依赖。插件包含 `dsh.bundle.patch` 配置和符合 dsh lazy-CJS 协议的客户端入口。更新时将安装命令中的版本号替换为新版本，或安装新 Release 的版本化 `.tgz` 地址，再重启宿主。卸载可执行 `dsh plugin --profile web remove dsh-knowledge-library`；已保存的资料保留在独立资料目录。
@@ -205,6 +207,8 @@ npm run test:ui
 
 `tests/dsh_smoke.py` 用于已经启动的**隔离 dsh 实例**，从 `DSH_TEST_URL` 读取带本机启动令牌的地址，验证原生侧栏与真实插件界面。不要把启动令牌提交到仓库。
 
+运行上述原生检查后，可以在同一隔离实例中执行 `python tests/dsh_style.py`。该检查要求宿主外观保持默认的“跟随系统”，会对比资料库与原生自动化任务页面的字体和按钮颜色，并验证深浅主题切换、弹窗、分类导航以及窄窗口布局。截图与报告保存在 `test-results/style-*`。
+
 源码分层：
 
 - `src/core/`：存储、检索、网页提取、字幕和任务队列。
@@ -223,6 +227,6 @@ npm run test:ui
 
 仓库的 `automation/workflows/` 提供 Windows / Linux 持续集成和版本发布的 GitHub Actions 模板，当前尚未启用。维护者如需自动化，可将模板复制到 `.github/workflows/`，再使用具有 workflow 写入权限的凭据推送。发布模板要求标签与 `package.json` 版本一致，验证后会上传安装包与 SHA-256 校验文件。
 
-当前版本使用本机 `npm run verify`、隔离的打包安装与原生界面验证后，手动上传 GitHub Release。后续手动发布也可以运行 `gh release create v版本 release/*.tgz release/SHA256SUMS --title "拾页 v版本" --notes-file CHANGELOG.md`。
+发布前运行本机 `npm run verify`，检查隔离安装与原生界面，再将同一个版本化安装包发布到 npm 和 GitHub Release。上传 Release 时只选择本次版本的 `.tgz` 与对应 `SHA256SUMS`。
 
-若以后发布到 npm，需要 npm 维护权限与可用的发布认证；然后用户才能按 npm 包名安装。公开 GitHub Release 的安装方式已经可以分发插件。
+npm 发布需要维护权限与有效认证。更新 GitHub 源码不会自动更新 npm；必须递增版本号并发布新包，用户再按新版本安装并重启宿主。
