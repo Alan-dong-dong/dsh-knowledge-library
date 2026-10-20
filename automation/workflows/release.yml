@@ -1,0 +1,41 @@
+name: Publish GitHub release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, e.g. v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.0'
+          cache: npm
+      - name: Match tag to package version
+        run: node --input-type=module -e 'import fs from "node:fs"; const p=JSON.parse(fs.readFileSync("package.json","utf8")); if (process.env.RELEASE_TAG !== `v${p.version}`) throw new Error("Tag and package version must match")'
+      - run: npm ci
+      - run: npm run verify
+      - name: Publish built package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release/*.tgz release/SHA256SUMS --clobber
+          else
+            gh release create "$RELEASE_TAG" release/*.tgz release/SHA256SUMS --verify-tag --title "拾页 $RELEASE_TAG" --notes-file CHANGELOG.md
+          fi

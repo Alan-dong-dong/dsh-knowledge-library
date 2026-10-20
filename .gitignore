@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.research/
+.test-runtime/
+.playwright/
+test-results/
+playwright-report/
+*.tgz
+library-data/
+*.log
+release/
+__pycache__/
+.env
+.env.*
+*.pem
+*.key

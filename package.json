@@ -1,0 +1,96 @@
+{
+  "name": "dsh-knowledge-library",
+  "version": "0.1.0",
+  "description": "本地优先的 DeepSeek Harness 资料库：采集、分类、检索与可追溯知识笔记",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alan-dong-dong/dsh-knowledge-library.git"
+  },
+  "homepage": "https://github.com/Alan-dong-dong/dsh-knowledge-library#readme",
+  "bugs": {
+    "url": "https://github.com/Alan-dong-dong/dsh-knowledge-library/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "knowledge-base",
+    "local-first",
+    "web-clipper",
+    "agent-tools"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./core": {
+      "types": "./dist/core/library.d.ts",
+      "default": "./dist/core/library.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "dev": "tsx src/standalone.ts",
+    "start": "node dist/standalone.js",
+    "test:ui": "python tests/run_ui.py",
+    "pack:check": "node scripts/check-package.mjs",
+    "verify": "npm run build && npm test && npm run pack:check",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.5",
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "0.18.12",
+    "turndown": "^7.2.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.18.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/turndown": "^5.0.5",
+    "esbuild": "^0.25.11",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
