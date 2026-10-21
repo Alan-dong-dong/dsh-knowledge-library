@@ -6,6 +6,7 @@ import type { CaptureFields, CaptureResult, Citation, EmptyTrashResult, Material
 import { PurgeStore } from './purge.js';
 import { extractArticle, formatTime, parseSubtitles, splitSegments } from './extract.js';
 import { validateUrl } from './fetch.js';
+import { noteFingerprint } from './incremental.js';
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_TEXT_CHARS = 2_000_000;
@@ -24,6 +25,12 @@ export function atomicJson(path: string, value: unknown): void {
   writeFileSync(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8', flag: 'wx' });
   renameSync(tmp, path);
 }
+function atomicText(path: string, value: string): void {
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, value, { encoding: 'utf8', flag: 'wx' }); renameSync(tmp, path);
+}
+interface NoteSnapshot { meta: Material; content: string; segments: Segment[] }
+interface NoteUpdate { jobId: string; phase: 'prepared' | 'committed'; before: NoteSnapshot; after: NoteSnapshot }
 
 export class Library {
   readonly root: string;
@@ -52,6 +59,7 @@ export class Library {
       this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
         CREATE TABLE IF NOT EXISTS materials (id TEXT PRIMARY KEY, path TEXT NOT NULL, meta TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE VIRTUAL TABLE IF NOT EXISTS material_fts USING fts5(id UNINDEXED, title, content, tokenize='trigram');`);
+      this.recoverNoteUpdate();
       this.rebuild();
       this.warnings.push(...this.cleanupPendingPurge().map(error => `待清理文件：${error}`));
     } catch (error) {
@@ -80,6 +88,7 @@ export class Library {
     this.db.prepare('INSERT INTO material_fts (id,title,content) VALUES (?,?,?)').run(meta.id, meta.title, content);
   }
   rebuild(): { indexed: number; warnings: string[] } {
+    this.recoverNoteUpdate();
     this.warnings.length = 0;
     const entries: Array<{ meta: Material; path: string; content: string }> = [];
     const visit = (directory: string, depth: number) => {
@@ -122,6 +131,7 @@ export class Library {
     return row;
   }
   get(id: string): MaterialDetail {
+    this.recoverNoteUpdate();
     const row = this.row(id);
     return { ...JSON.parse(row.meta), content: row.content, segments: JSON.parse(readFileSync(join(row.path, 'segments.json'), 'utf8')), path: row.path };
   }
@@ -134,6 +144,7 @@ export class Library {
     return { bytes: readFileSync(path), name: item.originalName || item.originalFile };
   }
   private save(content: string, fields: CaptureFields, extra: Partial<Material> & { kind: Material['kind'] }, original?: { name: string; bytes: Buffer }, suppliedSegments?: Segment[]): CaptureResult {
+    this.recoverNoteUpdate();
     if (content.length > MAX_TEXT_CHARS) throw new Error('正文超过 200 万字符，请拆分后导入');
     const digest = hash(`${extra.kind}\0${original ? hash(original.bytes) : content}\0${fields.sourceUrl ?? ''}\0${JSON.stringify(extra.citations ?? [])}${extra.knowledgeJobId ? `\0${extra.knowledgeJobId}` : ''}`);
     const duplicate = this.db.prepare('SELECT id FROM materials WHERE content_hash=? LIMIT 1').get(digest) as { id: string } | undefined;
@@ -303,6 +314,7 @@ export class Library {
     return errors;
   }
   emptyTrash(expectedToken: string): EmptyTrashResult {
+    this.recoverNoteUpdate();
     const plan = this.trashPlan();
     if (typeof expectedToken !== 'string' || expectedToken !== plan.token) throw new Error('回收站内容已改变，请重新打开清空确认窗口');
     const store = new PurgeStore(this.root);
@@ -343,11 +355,80 @@ export class Library {
     }
     return this.save(content.trim(), fields, { kind: 'note', citations, ...(knowledgeJobId ? { knowledgeJobId } : {}), extraction: '知识笔记；内容由用户或 Agent 提供，请结合引用核验' });
   }
+  private writeNoteSnapshot(snapshot: NoteSnapshot) {
+    const path = join(this.root, 'materials', ...categoryName(snapshot.meta.category).split('/'), snapshot.meta.id);
+    for (const file of ['content.md', 'segments.json', 'metadata.json']) this.assertContained(join(path, file));
+    atomicText(join(path, 'content.md'), snapshot.content);
+    atomicJson(join(path, 'segments.json'), snapshot.segments);
+    atomicJson(join(path, 'metadata.json'), snapshot.meta);
+    return path;
+  }
+  private archiveNoteUpdate(update: NoteUpdate) {
+    const history = join(this.root, 'materials', ...categoryName(update.before.meta.category).split('/'), update.before.meta.id, '.history');
+    this.assertContained(history); mkdirSync(history, { recursive: true });
+    const target = join(history, `${update.jobId}.json`); this.assertContained(target);
+    renameSync(join(this.root, '.system', 'note-update.json'), target);
+  }
+  private recoverNoteUpdate() {
+    const file = join(this.root, '.system', 'note-update.json'); this.assertContained(file);
+    if (!existsSync(file)) return;
+    const update = JSON.parse(readFileSync(file, 'utf8')) as NoteUpdate;
+    if (!update || !/^knowledge_[a-f0-9-]+$/.test(update.jobId) || !['prepared', 'committed'].includes(update.phase)) throw new Error('笔记更新日志损坏，请检查 .system/note-update.json');
+    for (const snapshot of [update.before, update.after]) {
+      if (!snapshot || snapshot.meta?.kind !== 'note' || !/^r_[a-f0-9-]+$/.test(snapshot.meta.id) || typeof snapshot.content !== 'string' || !Array.isArray(snapshot.segments) || hash(snapshot.content) !== snapshot.meta.textChecksum || hash(JSON.stringify(snapshot.segments, null, 2)) !== snapshot.meta.segmentsChecksum) throw new Error('笔记更新快照损坏，请检查更新日志');
+    }
+    if (update.before.meta.id !== update.after.meta.id || update.before.meta.category !== update.after.meta.category || update.after.meta.revision !== update.before.meta.revision + 1) throw new Error('笔记更新版本无效');
+    const snapshot = update.phase === 'committed' ? update.after : update.before;
+    const path = this.writeNoteSnapshot(snapshot);
+    this.db.exec('BEGIN IMMEDIATE');
+    try { this.index(snapshot.meta, path, snapshot.content); this.db.exec('COMMIT'); }
+    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    if (update.phase === 'committed') this.archiveNoteUpdate(update); else unlinkSync(file);
+  }
+  /** Append only after explicit confirmation. Existing paragraph IDs and text never change. */
+  appendNote(id: string, expectedFingerprint: string, addition: string, citations: Citation[], tags: string[], jobId: string): CaptureResult {
+    this.recoverNoteUpdate();
+    const previous = this.generatedNote(jobId);
+    if (previous) return { material: previous, duplicate: true };
+    const item = this.get(id);
+    if (item.kind !== 'note' || item.deletedAt) throw new Error('目标知识笔记已删除或不可用，请改为新建或重新整理');
+    if (noteFingerprint(item) !== expectedFingerprint) throw new Error('已有笔记已改变，请改为新建，或重新整理后核对');
+    if (!/^knowledge_[a-f0-9-]+$/.test(jobId) || typeof addition !== 'string' || addition.length > 50_000) throw new Error('笔记补充参数无效');
+    for (const citation of citations) {
+      const source = this.get(citation.materialId);
+      if (source.deletedAt || source.kind === 'note' || !citation.segmentId || !source.segments.some(s => s.id === citation.segmentId)) throw new Error('新增来源已删除或引用无效');
+    }
+    const merged = [...new Map([...item.citations, ...citations].map(c => [JSON.stringify([c.materialId, c.segmentId]), c])).values()];
+    if (merged.length > 200) throw new Error('合并后来源超过200条，请改为新建笔记');
+    const mergedTags = [...new Set([...item.tags, ...this.tags(tags)])];
+    if (mergedTags.length > 30) throw new Error('合并后标签超过30个，请减少标签或新建笔记');
+    const suffix = addition.trim() ? `## 知识补充 · ${now().slice(0, 10)}\n\n${addition.trim()}` : '';
+    const content = item.content + (suffix ? `\n\n${suffix}` : '');
+    if (content.length > MAX_TEXT_CHARS) throw new Error('笔记超过正文上限，请改为新建');
+    const segments = [...item.segments, ...splitSegments(suffix).map(s => ({ ...s, id: `u_${randomUUID().replaceAll('-', '')}` }))];
+    const { content: oldContent, segments: oldSegments, path: _path, ...meta } = item;
+    const before = { meta, content: oldContent, segments: oldSegments };
+    const after: NoteSnapshot = { content, segments, meta: { ...meta, revision: meta.revision + 1, updatedAt: now(), tags: mergedTags, citations: merged, knowledgeUpdateJobIds: [...(meta.knowledgeUpdateJobIds || []), jobId], contentHash: hash(`note-update\0${content}\0${jobId}`), textChecksum: hash(content), segmentsChecksum: hash(JSON.stringify(segments, null, 2)) } };
+    const update: NoteUpdate = { jobId, phase: 'prepared', before, after };
+    const journal = join(this.root, '.system', 'note-update.json'); this.assertContained(journal);
+    atomicJson(journal, update);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const path = this.writeNoteSnapshot(after); this.index(after.meta, path, content);
+      update.phase = 'committed'; atomicJson(journal, update); this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK'); update.phase = 'prepared'; atomicJson(journal, update);
+      this.writeNoteSnapshot(before); unlinkSync(journal); throw error;
+    }
+    this.archiveNoteUpdate(update);
+    return { material: this.get(id), duplicate: false };
+  }
   generatedNote(jobId: string): MaterialDetail | undefined {
-    const row = this.db.prepare("SELECT id FROM materials WHERE json_extract(meta, '$.knowledgeJobId')=? LIMIT 1").get(jobId) as { id: string } | undefined;
+    const row = this.db.prepare("SELECT id FROM materials WHERE json_extract(meta, '$.knowledgeJobId')=? OR EXISTS (SELECT 1 FROM json_each(materials.meta, '$.knowledgeUpdateJobIds') WHERE value=?) LIMIT 1").get(jobId, jobId) as { id: string } | undefined;
     return row ? this.get(row.id) : undefined;
   }
   search(options: SearchOptions = {}): { items: SearchResult[]; total: number } {
+    this.recoverNoteUpdate();
     const query = cleanString(options.query, 500);
     const limit = Math.max(1, Math.min(100, Number(options.limit) || 40));
     const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
@@ -383,6 +464,7 @@ export class Library {
     };
   }
   stats() {
+    this.recoverNoteUpdate();
     const rows = this.db.prepare('SELECT meta FROM materials').all() as Array<{ meta: string }>;
     const all = rows.map(row => JSON.parse(row.meta) as Material);
     const materials = all.filter(item => !item.deletedAt);

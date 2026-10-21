@@ -48,7 +48,7 @@ with sync_playwright() as p:
         page.get_by_role('button', name='知识整理', exact=True).click()
         dialog = page.get_by_role('dialog', name='知识整理', exact=True)
         expect(dialog.get_by_text('重启保留草稿', exact=True)).to_be_visible()
-        dialog.get_by_role('button').filter(has_text='重启保留草稿').click()
+        dialog.get_by_role('button').filter(has=page.get_by_text('重启保留草稿', exact=True)).click()
         confirm = page.get_by_role('dialog', name='确认知识笔记', exact=True)
         expect(confirm.get_by_label('笔记正文')).to_contain_text('核心观点')
         result['restartVerified'] = True
@@ -82,7 +82,7 @@ with sync_playwright() as p:
     confirm.get_by_label('笔记分类').fill('知识笔记/实践')
     confirm.get_by_label('笔记正文').fill(confirm.get_by_label('笔记正文').input_value() + '\n\n我的判断：保留证据才能复用知识。')
     confirm.get_by_role('button', name='保存草稿', exact=True).click()
-    expect(page.get_by_text('草稿已保存，尚未生成正式笔记', exact=True)).to_be_visible()
+    expect(page.get_by_text('草稿已保存，正式知识笔记尚未修改', exact=True)).to_be_visible()
     page.screenshot(path=str(out / (prefix + '-draft-desktop.png')), animations='disabled')
     confirm.get_by_role('button', name='关闭弹窗', exact=True).click()
     detail.get_by_role('button', name='查看整理任务', exact=True).click()

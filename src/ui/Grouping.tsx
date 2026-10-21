@@ -90,7 +90,7 @@ export function GroupingEditor({ root, job, model, onRefresh, onNotify, onOpenSo
     })}
     <label className="kl-grouping-sync"><input type="checkbox" aria-label="同步来源分类和标签" checked={apply} disabled={busy || locked} onChange={e => setApply(e.target.checked)} /><span>确认后同步来源分类和标签到本地目录</span></label>
     <p className="kl-knowledge-model">同步时会移动已分组资料的目录、保留原标签并添加分组标签；未分组资料保持待整理。关闭同步可只按组生成草稿。每组生成后仍需单独确认保存正式笔记。</p>
-    <p className="kl-knowledge-model">生成草稿使用模型：{model.model || '尚未配置'}。{model.model !== job.model && `逐篇分析时使用的是 ${job.model || '未记录模型'}。`}确认后将继续向该模型发送各组正文。本次智能整理及其子任务合计最多 80 次模型请求（已使用 {job.modelCalls || 0} 次），可能产生调用费用。</p>
+    <p className="kl-knowledge-model">生成草稿使用模型：{model.model || '尚未配置'}。{model.model !== job.model && `逐篇分析时使用的是 ${job.model || '未记录模型'}。`}确认后将继续向该模型发送各组正文及检索到的相关知识笔记，用于生成草稿和判断增量补充。本次智能整理及其子任务合计最多 80 次模型请求（已使用 {job.modelCalls || 0} 次），可能产生调用费用。</p>
     {!!groups.length && !model.available && <p role="alert" className="kl-form-error">{model.reason || '请先配置生成模型'}</p>}
     {error && <p role="alert" className="kl-form-error">{error}</p>}
     <footer>{!locked && <button className="kl-secondary" disabled={busy} onClick={() => void save(false)}>保存分组方案</button>}<button className="kl-primary" disabled={busy || (!!groups.length && !model.available) || job.classification?.direction === 'rollback'} onClick={() => void save(true)}>{busy ? '正在处理…' : locked ? '继续归类并生成草稿' : groups.length ? `确认${apply ? '归类' : '分组'}并生成 ${groups.length} 份草稿` : '确认保留全部待整理'}</button></footer>

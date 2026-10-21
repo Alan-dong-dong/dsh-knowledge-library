@@ -46,7 +46,7 @@ def run(restart=False):
                 raise RuntimeError('Native knowledge model not ready; inspect ' + str(log_path))
             if restart:
                 env['KNOWLEDGE_UI_RESTART'] = '1'
-            for script in ['tests/ui_knowledge.py', 'tests/ui_grouping.py']:
+            for script in ['tests/ui_knowledge.py', 'tests/ui_grouping.py', 'tests/ui_incremental.py']:
                 result = subprocess.run([sys.executable, script], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
                 (runtime / (('restart-' if restart else '') + Path(script).stem + '.log')).write_text(result.stdout, encoding='utf-8')
                 print(result.stdout, flush=True)

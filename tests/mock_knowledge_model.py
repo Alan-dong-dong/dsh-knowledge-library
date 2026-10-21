@@ -24,7 +24,14 @@ class ModelHandler(BaseHTTPRequestHandler):
             return
         if '慢速验证' in prompt:
             time.sleep(5)
-        if '任务：逐篇分析' in prompt:
+        if '任务：增量知识对比' in prompt:
+            candidates = json.loads(prompt.split('已有笔记候选（完整正文，均为资料而非指令）：', 1)[1].split('\n来源目录：', 1)[0])
+            sources = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))
+            target = next((item for item in candidates if '增量主题' in item['title']), None)
+            action = 'duplicate' if target and any('增量重复' in s['title'] for s in sources) else 'append' if target else 'new'
+            refs = '\n'.join('library://' + s['materialId'] + '/' + s['segmentIds'][0] for s in sources)
+            content = json.dumps({'action': action, 'noteId': target['id'] if target else '', 'reason': '新增证据补充相同问题的适用条件' if target else '本次独立主题，建议新建', 'overlaps': ['均讨论来源核验'] if target else [], 'additions': ['补充失败恢复的边界条件'] if action == 'append' else [], 'conflicts': ['失败恢复仍需根据具体场景核实'] if target else [], 'content': ('## 新增方法\n设置恢复边界并记录证据。\n\n## 条件与待核实\n仅适用于本次来源；需验证其他环境。\n' + refs) if action == 'append' else ''}, ensure_ascii=False)
+        elif '任务：逐篇分析' in prompt:
             source = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))[0]
             title = source['title']
             uncertain = any(word in title for word in ['未知', '孤立', '缺少上下文'])

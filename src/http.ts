@@ -88,11 +88,13 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
               if (data.confirmed !== true) throw new Error('请确认回退未完成的分类修改');
               send(res, 200, knowledge.rollbackPlan(job[1])); return;
             }
-            if (req.method === 'PATCH' && !job[2]) { send(res, 200, knowledge.edit(job[1], data.draft, data.version)); return; }
+            if (req.method === 'PATCH' && !job[2]) { send(res, 200, knowledge.edit(job[1], data.draft, data.version, data.integration)); return; }
             if (req.method === 'POST' && job[2] === 'cancel') { send(res, 200, knowledge.cancel(job[1])); return; }
             if (req.method === 'POST' && job[2] === 'discard') { send(res, 200, knowledge.discard(job[1])); return; }
             if (req.method === 'POST' && job[2] === 'confirm') {
               if (data.confirmed !== true) throw new Error('请确认保存知识笔记');
+              const current = knowledge.get(job[1]);
+              if (current.integration?.choice && current.integration.choice !== 'new' && data.integrationChoice !== current.integration.choice) throw new Error('请核对增量处理方式后确认，旧版页面请刷新');
               send(res, 200, knowledge.confirm(job[1], data.version, data.category)); return;
             }
           }

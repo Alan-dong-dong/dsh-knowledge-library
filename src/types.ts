@@ -24,10 +24,11 @@ export interface Material {
   deletedAt?: string;
   deletionId?: string;
   knowledgeJobId?: string;
+  knowledgeUpdateJobIds?: string[];
   contentHash: string;
   textChecksum?: string;
   segmentsChecksum?: string;
-  revision: 1;
+  revision: number;
   originalName?: string;
   originalFile?: string;
   citations: Citation[];
@@ -83,6 +84,17 @@ export interface KnowledgeDraft {
   category?: string;
 }
 export interface KnowledgeSource { id: string; title: string; fingerprint: string; category?: string; tags?: string[] }
+export interface NoteIntegration {
+  recommendation: 'new' | 'append' | 'duplicate';
+  choice: 'new' | 'append' | 'duplicate';
+  reason: string;
+  overlaps: string[];
+  additions: string[];
+  conflicts: string[];
+  content: string;
+  search: { scanned: number; matched: number; compared: number; oversized: number };
+  target?: { id: string; title: string; category: string; revision: number; fingerprint: string; content: string };
+}
 export interface SourceAnalysis {
   sourceId: string;
   theme: string;
@@ -118,6 +130,8 @@ export interface KnowledgeJob {
   progress: string;
   model?: string;
   modelCalls?: number;
+  incremental?: boolean;
+  integration?: NoteIntegration;
   error?: string;
   draft?: KnowledgeDraft;
   draftVersion: number;
