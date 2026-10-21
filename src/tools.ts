@@ -2,6 +2,7 @@ import { defineTool, type ParameterSchemaSpec, type ToolDefinition } from '@deep
 import type { CaptureFields, Citation } from './types.js';
 import type { Library } from './core/library.js';
 import type { ImportQueue } from './core/jobs.js';
+import type { KnowledgeQueue } from './core/knowledge.js';
 
 const common = {
   title: { type: 'string', description: '资料标题' },
@@ -17,7 +18,7 @@ function resultSummary(result: ReturnType<Library['captureText']>) {
   const { content, segments, path, ...material } = result.material;
   return { ...material, duplicate: result.duplicate, segmentCount: segments.length, path };
 }
-export function createTools(library: Library, queue: ImportQueue): ToolDefinition[] {
+export function createTools(library: Library, queue: ImportQueue, knowledge?: KnowledgeQueue): ToolDefinition[] {
   const tool = <const S extends ParameterSchemaSpec>(name: string, description: string, parameters: S,
     execute: (args: Record<string, any>) => unknown, readOnly = false) => defineTool({
     name, description, parameters,
@@ -63,5 +64,13 @@ export function createTools(library: Library, queue: ImportQueue): ToolDefinitio
       retryId: { type: 'string' },
     }, args => args.retryId ? queue.retry(args.retryId) : queue.list()),
     tool('library_overview', '查看资料库统计、分类、专题、标签和索引警告。', {}, () => library.stats(), true),
+    ...(knowledge ? [
+      tool('library_knowledge_generate', '选择1至10份原始资料，调用宿主默认模型生成知识笔记草稿；保留来源，待用户在资料库中编辑确认后保存。不会自动发布笔记。', {
+        sourceIds: { type: 'array', required: true, items: { type: 'string' } }, topic: { type: 'string', description: '围绕什么问题整理，可选' },
+      }, args => knowledge.add(args.sourceIds, args.topic)),
+      tool('library_knowledge_status', '查看知识整理状态、失败原因和待确认草稿；提醒用户到资料库确认保存，不代替用户确认。', {
+        id: { type: 'string', description: '知识整理任务ID；省略查看总览' },
+      }, args => args.id ? knowledge.get(args.id) : knowledge.overview(), true),
+    ] : []),
   ];
 }

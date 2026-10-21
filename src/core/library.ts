@@ -135,7 +135,7 @@ export class Library {
   }
   private save(content: string, fields: CaptureFields, extra: Partial<Material> & { kind: Material['kind'] }, original?: { name: string; bytes: Buffer }, suppliedSegments?: Segment[]): CaptureResult {
     if (content.length > MAX_TEXT_CHARS) throw new Error('正文超过 200 万字符，请拆分后导入');
-    const digest = hash(`${extra.kind}\0${original ? hash(original.bytes) : content}\0${fields.sourceUrl ?? ''}\0${JSON.stringify(extra.citations ?? [])}`);
+    const digest = hash(`${extra.kind}\0${original ? hash(original.bytes) : content}\0${fields.sourceUrl ?? ''}\0${JSON.stringify(extra.citations ?? [])}${extra.knowledgeJobId ? `\0${extra.knowledgeJobId}` : ''}`);
     const duplicate = this.db.prepare('SELECT id FROM materials WHERE content_hash=? LIMIT 1').get(digest) as { id: string } | undefined;
     if (duplicate) return { material: this.get(duplicate.id).deletedAt ? this.restore(duplicate.id) : this.get(duplicate.id), duplicate: true };
     const category = categoryName(fields.category);
@@ -319,14 +319,18 @@ export class Library {
     }
     return { deleted, pending: store.list().length, errors };
   }
-  saveNote(content: string, citations: Citation[], fields: CaptureFields): CaptureResult {
+  saveNote(content: string, citations: Citation[], fields: CaptureFields, knowledgeJobId?: string): CaptureResult {
     if (!content?.trim()) throw new Error('笔记内容不能为空');
     if (!Array.isArray(citations) || citations.length > 200) throw new Error('引用必须是数组且最多 200 条');
     for (const citation of citations) {
       const source = this.get(citation.materialId);
       if (citation.segmentId && !source.segments.some(s => s.id === citation.segmentId)) throw new Error(`引用段落不存在：${citation.segmentId}`);
     }
-    return this.save(content.trim(), fields, { kind: 'note', citations, extraction: '知识笔记；内容由用户或 Agent 提供，请结合引用核验' });
+    return this.save(content.trim(), fields, { kind: 'note', citations, ...(knowledgeJobId ? { knowledgeJobId } : {}), extraction: '知识笔记；内容由用户或 Agent 提供，请结合引用核验' });
+  }
+  generatedNote(jobId: string): MaterialDetail | undefined {
+    const row = this.db.prepare("SELECT id FROM materials WHERE json_extract(meta, '$.knowledgeJobId')=? LIMIT 1").get(jobId) as { id: string } | undefined;
+    return row ? this.get(row.id) : undefined;
   }
   search(options: SearchOptions = {}): { items: SearchResult[]; total: number } {
     const query = cleanString(options.query, 500);

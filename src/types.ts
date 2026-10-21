@@ -23,6 +23,7 @@ export interface Material {
   updatedAt: string;
   deletedAt?: string;
   deletionId?: string;
+  knowledgeJobId?: string;
   contentHash: string;
   textChecksum?: string;
   segmentsChecksum?: string;
@@ -73,4 +74,40 @@ export interface ImportJob {
   materialId?: string;
   error?: string;
   errorCode?: 'PAGE_REQUIRES_BROWSER';
+}
+export interface KnowledgeDraft {
+  title: string;
+  content: string;
+  tags: string[];
+  citations: Citation[];
+  category?: string;
+}
+export interface KnowledgeSource { id: string; title: string; fingerprint: string }
+export interface KnowledgeJob {
+  id: string;
+  sourceIds: string[];
+  sources: KnowledgeSource[];
+  topic: string;
+  status: 'queued' | 'running' | 'draft' | 'completed' | 'failed' | 'cancelled' | 'discarded';
+  createdAt: string;
+  updatedAt: string;
+  progress: string;
+  model?: string;
+  error?: string;
+  draft?: KnowledgeDraft;
+  draftVersion: number;
+  noteId?: string;
+}
+export interface KnowledgeState {
+  status: 'pending' | 'running' | 'draft' | 'completed' | 'failed';
+  jobId?: string;
+  noteIds: string[];
+}
+export interface KnowledgeOverview {
+  supported: boolean;
+  available: boolean;
+  model?: string;
+  reason?: string;
+  jobs: KnowledgeJob[];
+  states: Record<string, KnowledgeState>;
 }

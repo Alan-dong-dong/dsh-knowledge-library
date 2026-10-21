@@ -9,6 +9,8 @@ import { createTools } from './tools.js';
 import { API_PATH, createHandler } from './http.js';
 import { fetchPublicPage } from './core/fetch.js';
 import { createDirectorySettings } from './directory-settings.js';
+import { KnowledgeQueue } from './core/knowledge.js';
+import { harnessKnowledgeModel } from './knowledge-model.js';
 
 export const name = 'knowledge-library';
 export const inject = ['tools'];
@@ -20,13 +22,15 @@ export const Config = z.object({
 export function apply(ctx: Context, config: Config) {
   const library = new Library(config.root);
   let queue: ImportQueue;
-  try { queue = new ImportQueue(library, (url, signal) => fetchPublicPage(url, signal, { allowProxyFakeIp: config.allowProxyFakeIp })); } catch (error) { library.close(); throw error; }
-  ctx.effect(() => async () => { await queue.close(); library.close(); });
-  for (const tool of createTools(library, queue)) ctx.tools.register(tool);
+  let knowledge: KnowledgeQueue;
+  try { knowledge = new KnowledgeQueue(library, harnessKnowledgeModel(ctx)); } catch (error) { library.close(); throw error; }
+  try { queue = new ImportQueue(library, (url, signal) => fetchPublicPage(url, signal, { allowProxyFakeIp: config.allowProxyFakeIp })); } catch (error) { void knowledge.close(); library.close(); throw error; }
+  ctx.effect(() => async () => { await Promise.all([queue.close(), knowledge.close()]); library.close(); });
+  for (const tool of createTools(library, queue, knowledge)) ctx.tools.register(tool);
   ctx.inject(['webServer'], child => {
     child.effect(() => child.webServer.register({
       kind: 'prefix', path: API_PATH,
-      handler: createHandler(library, queue, () => child.webServer.getOrigin(), createDirectorySettings(ctx, library, config)),
+      handler: createHandler(library, queue, () => child.webServer.getOrigin(), createDirectorySettings(ctx, library, config), knowledge),
     }));
   });
   ctx.logger.info(`资料库已加载：${library.root}`);

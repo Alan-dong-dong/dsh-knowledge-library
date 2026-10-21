@@ -7,14 +7,17 @@ import { ImportQueue } from './core/jobs.js';
 import { API_PATH, createHandler, serveAsset } from './http.js';
 import { fetchPublicPage } from './core/fetch.js';
 import { createPreviewSettings } from './preview-settings.js';
+import { KnowledgeQueue } from './core/knowledge.js';
+import { previewKnowledgeModel } from './knowledge-model.js';
 
 const root = resolve(process.env.KNOWLEDGE_LIBRARY_ROOT || join(homedir(), 'Documents', 'DSH-Knowledge-Library'));
 const library = new Library(root);
+const knowledge = new KnowledgeQueue(library, previewKnowledgeModel());
 const settings = createPreviewSettings(library, { allowProxyFakeIp: process.env.KNOWLEDGE_LIBRARY_ALLOW_FAKE_IP === '1' });
 const queue = new ImportQueue(library, (url, signal) => fetchPublicPage(url, signal, settings.fetchPolicy()));
 const port = Number(process.env.PORT || 4317);
 let origin = `http://127.0.0.1:${port}`;
-const api = createHandler(library, queue, () => origin, settings);
+const api = createHandler(library, queue, () => origin, settings, knowledge);
 const server = createServer((req, res) => {
   if (req.url?.startsWith(API_PATH)) void api(req, res);
   else serveAsset(req, res);
@@ -29,7 +32,7 @@ async function shutdown() {
   if (stopping) return;
   stopping = true;
   server.close(); server.closeAllConnections();
-  await queue.close(); library.close();
+  await Promise.all([queue.close(), knowledge.close()]); library.close();
 }
 process.on('SIGINT', () => void shutdown());
 process.on('SIGTERM', () => void shutdown());

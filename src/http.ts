@@ -5,6 +5,7 @@ import type { Library } from './core/library.js';
 import type { ImportQueue } from './core/jobs.js';
 import type { CaptureFields, Citation } from './types.js';
 import type { DirectorySettings } from './directory-settings.js';
+import type { KnowledgeQueue } from './core/knowledge.js';
 
 export const API_PATH = '/knowledge-library/api';
 function send(res: ServerResponse, status: number, value: unknown) {
@@ -33,7 +34,7 @@ function fields(data: Record<string, any>): CaptureFields {
 }
 const localAddress = (address = '') => address === '::1' || address === '127.0.0.1' || address === '::ffff:127.0.0.1';
 
-export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string, directories?: DirectorySettings) {
+export function createHandler(library: Library, queue: ImportQueue, getOrigin: () => string, directories?: DirectorySettings, knowledge?: KnowledgeQueue) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const origin = getOrigin();
@@ -51,6 +52,9 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
           send(res, 200, library.search({ ...Object.fromEntries(url.searchParams), trashed: url.searchParams.get('trashed') === '1', limit: Number(url.searchParams.get('limit')) || 40, offset: Number(url.searchParams.get('offset')) || 0 })); return;
         }
         if (path === '/jobs') { send(res, 200, queue.list()); return; }
+        if (path === '/knowledge') { send(res, 200, knowledge?.overview() ?? { supported: false, available: false, reason: '当前服务未启用知识整理，请重启升级后的资料库服务', jobs: [], states: {} }); return; }
+        const knowledgeJob = path.match(/^\/knowledge\/jobs\/(knowledge_[a-f0-9-]+)$/);
+        if (knowledgeJob && knowledge) { send(res, 200, knowledge.get(knowledgeJob[1])); return; }
         const match = path.match(/^\/materials\/(r_[a-f0-9-]+)(?:\/(export|original))?$/);
         if (match) {
           if (match[2] === 'export') {
@@ -69,6 +73,21 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'DELETE') {
         if (req.headers['x-knowledge-library'] !== '1') { send(res, 403, { error: '缺少同源请求标记' }); return; }
         const data = await body(req);
+        if (path.startsWith('/knowledge/')) {
+          if (!knowledge) throw new Error('当前服务未启用知识整理，请重启资料库服务');
+          if (data.expectedRoot !== library.root) throw new Error('资料库目录已改变，请刷新后再操作');
+          if (path === '/knowledge/jobs' && req.method === 'POST') { send(res, 202, knowledge.add(data.sourceIds, data.topic)); return; }
+          const job = path.match(/^\/knowledge\/jobs\/(knowledge_[a-f0-9-]+)(?:\/(cancel|discard|confirm))?$/);
+          if (job) {
+            if (req.method === 'PATCH' && !job[2]) { send(res, 200, knowledge.edit(job[1], data.draft, data.version)); return; }
+            if (req.method === 'POST' && job[2] === 'cancel') { send(res, 200, knowledge.cancel(job[1])); return; }
+            if (req.method === 'POST' && job[2] === 'discard') { send(res, 200, knowledge.discard(job[1])); return; }
+            if (req.method === 'POST' && job[2] === 'confirm') {
+              if (data.confirmed !== true) throw new Error('请确认保存知识笔记');
+              send(res, 200, knowledge.confirm(job[1], data.version, data.category)); return;
+            }
+          }
+        }
         if (req.method === 'POST' && path === '/trash/empty') {
           if (data.expectedRoot !== library.root) throw new Error('资料库目录已改变，请刷新后再操作');
           if (data.confirmed !== true || typeof data.token !== 'string') throw new Error('请先确认永久清空回收站');

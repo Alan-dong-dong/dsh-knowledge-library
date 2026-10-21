@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { CaptureFields, Citation, EmptyTrashResult, ImportJob, MaterialDetail, MaterialKind, SearchResult, Segment, TrashSnapshot } from '../types.js';
+import type { CaptureFields, Citation, EmptyTrashResult, ImportJob, KnowledgeOverview, MaterialDetail, MaterialKind, SearchResult, Segment, TrashSnapshot } from '../types.js';
 import { Icon } from './icons.js';
 import type { DirectoryListing } from '../directory-settings.js';
+import { API, ApiError, api, post } from './api.js';
+import { Dialog } from './Dialog.js';
+import { KnowledgeBadge, KnowledgeJobsDialog, StartKnowledgeDialog } from './Knowledge.js';
 
-const API = '/knowledge-library/api';
 const kinds: Record<MaterialKind, { label: string; icon: string }> = {
   web: { label: '网页', icon: 'web' }, text: { label: '文本', icon: 'file' }, file: { label: '文件', icon: 'file' },
   video: { label: '音视频', icon: 'video' }, transcript: { label: '字幕', icon: 'video' }, note: { label: '笔记', icon: 'note' },
@@ -13,13 +15,6 @@ type Filter = { category?: string; collection?: string; kind?: string; tag?: str
 type Editor = { mode: 'capture' | 'note' | 'edit'; source?: MaterialDetail; segment?: Segment; initialType?: 'text'; sourceUrl?: string };
 const time = (v: number) => `${String(Math.floor(v / 3600)).padStart(2, '0')}:${String(Math.floor(v / 60) % 60).padStart(2, '0')}:${String(Math.floor(v) % 60).padStart(2, '0')}`;
 const date = (value: string) => new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(value));
-async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(API + path, { ...options, headers: { 'Content-Type': 'application/json', 'X-Knowledge-Library': '1', ...options.headers } });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
-  return data as T;
-}
-const post = <T,>(path: string, value: unknown, method = 'POST', signal?: AbortSignal) => api<T>(path, { method, body: JSON.stringify(value), signal });
 function splitTags(value: string) { return value.split(/[,，]/).map(v => v.trim()).filter(Boolean); }
 
 export function App() {
@@ -36,6 +31,11 @@ export function App() {
   const [restoring, setRestoring] = useState<string>();
   const [emptyRoot, setEmptyRoot] = useState<string>();
   const [jobs, setJobs] = useState<ImportJob[]>([]);
+  const [knowledge, setKnowledge] = useState<KnowledgeOverview>();
+  const [batchMode, setBatchMode] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [generation, setGeneration] = useState<{ root: string; sourceIds: string[] }>();
+  const [knowledgeOpen, setKnowledgeOpen] = useState<{ root: string; jobId?: string }>();
   const [showJobs, setShowJobs] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [settingsFromJobs, setSettingsFromJobs] = useState(false);
@@ -50,11 +50,15 @@ export function App() {
   const detailRef = useRef<HTMLElement>(null);
   const refresh = useCallback(() => setRevision(v => v + 1), []);
   const notify = (message: string) => setToast(message);
-  const chooseFilter = (next: Filter) => { setFilter(next); setLimit(40); setSelected(undefined); setAnchor(undefined); setDetail(undefined); setShowNavigation(false); };
+  const chooseFilter = (next: Filter) => { setFilter(next); setLimit(40); setSelected(undefined); setAnchor(undefined); setDetail(undefined); setShowNavigation(false); setBatchMode(false); setCheckedIds([]); };
   const refreshMeta = useCallback(async () => {
-    const [s, j] = await Promise.all([api<Stats>('/stats'), api<ImportJob[]>('/jobs')]);
-    setStats(s); setJobs(j);
+    const [s, j, k] = await Promise.all([api<Stats>('/stats'), api<ImportJob[]>('/jobs'), api<KnowledgeOverview>('/knowledge').catch(e => {
+      if (e instanceof ApiError && e.status === 404) return { supported: false, available: false, reason: '请重启资料库服务以启用知识整理。', jobs: [], states: {} } as KnowledgeOverview;
+      throw e;
+    })]);
+    setStats(s); setJobs(j); setKnowledge(k);
   }, []);
+  useEffect(() => { setCheckedIds([]); }, [query]);
   useEffect(() => { void refreshMeta().catch(e => setError(e.message)); }, [revision, refreshMeta]);
   useEffect(() => {
     const controller = new AbortController();
@@ -84,11 +88,13 @@ export function App() {
     element?.scrollIntoView({ block: 'center' });
   }, [detail, anchor]);
   const pending = jobs.filter(j => ['queued', 'running'].includes(j.status)).length;
+  const knowledgePending = knowledge?.jobs.filter(j => ['queued', 'running'].includes(j.status)).length || 0;
+  const draftCount = knowledge?.jobs.filter(j => j.status === 'draft').length || 0;
   useEffect(() => {
-    if (!pending) return;
+    if (!pending && !knowledgePending) return;
     const interval = setInterval(refresh, 2500);
     return () => clearInterval(interval);
-  }, [pending, refresh]);
+  }, [pending, knowledgePending, refresh]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(''), 3500);
@@ -119,6 +125,12 @@ export function App() {
     catch (e) { setError((e as Error).message); }
     finally { setRestoring(undefined); }
   }
+  function openKnowledgeSource(id: string, segmentId?: string) {
+    setKnowledgeOpen(undefined); chooseFilter({}); setQuery(''); setSelected(id); setAnchor(segmentId); refresh();
+  }
+  function generateFor(ids: string[]) {
+    if (stats) setGeneration({ root: stats.root, sourceIds: ids });
+  }
   const currentTitle = filter.trashed ? '回收站' : filter.category || filter.collection || (filter.tag ? `标签 · ${filter.tag}` : filter.kind === 'note' ? '知识笔记' : '全部资料');
   return <div className="kl-app">
     <main className="kl-workspace">
@@ -134,11 +146,13 @@ export function App() {
       </div>
       <div className="kl-toolbar"><label className="kl-search"><Icon name="search" size={19} /><input ref={searchRef} aria-label="搜索资料" placeholder="搜索正文、标题、标签…" value={query} onChange={e => { setQuery(e.target.value); setLimit(40); }} /><kbd>Ctrl K</kbd></label>
         <button aria-label={pending ? `采集任务，${pending} 项处理中` : '采集任务'} className={`kl-job-button ${pending ? 'has-jobs' : ''}`} onClick={() => setShowJobs(true)}><Icon name="clock" size={17} /><span>{pending ? `${pending} 项处理中` : '采集任务'}</span>{jobs.some(j => j.status === 'failed') && <i />}</button>
+        <button aria-label="知识整理" title="知识整理" className={`kl-job-button ${knowledgePending || draftCount ? 'has-jobs' : ''}`} onClick={() => { refresh(); if (stats) setKnowledgeOpen({ root: stats.root }); }}><Icon name="note" size={17} /><span>{draftCount ? `${draftCount} 份待确认` : '知识整理'}</span>{!!knowledgePending && <span className="kl-spinner" />}</button>
         <button className="kl-icon-button" aria-label="资料库设置" title="资料库设置" onClick={() => { setSettingsFromJobs(false); setShowInfo(true); }}><Icon name="settings" size={18} /></button>
       </div>
       {!!error && <div className="kl-error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
       <div className="kl-filterbar"><span><b>{total}</b> 份资料{query && ` · “${query}”`}</span><div><select aria-label="按类型筛选" value={filter.kind || ''} onChange={e => { setFilter({ ...filter, kind: e.target.value || undefined }); setLimit(40); }}><option value="">所有类型</option>{Object.entries(kinds).map(([value, kind]) => <option key={value} value={value}>{kind.label}</option>)}</select><span className="kl-sort-label">最近更新 ↓</span></div></div>
       {filter.trashed && <div className="kl-trash-toolbar"><p>{stats?.canEmptyTrash ? (stats.purgePending ? `${stats.purgePending} 份资料的文件清理未完成，可再次清空以重试。` : '清空将永久删除整个回收站，不受当前搜索和类型筛选限制。') : '请重启资料库服务以启用清空回收站。'}</p><button className="kl-secondary kl-danger" disabled={!stats?.canEmptyTrash || !(stats.trashed || stats.purgePending) || !!restoring} onClick={() => stats && setEmptyRoot(stats.root)}><Icon name="trash" size={15} />清空回收站</button></div>}
+      {!filter.trashed && filter.kind !== 'note' && <div className="kl-knowledge-toolbar"><p>{batchMode ? `已选择 ${checkedIds.length} / 10 份资料；切换搜索或分类会清除选择。` : '把资料整理为带来源的知识笔记。原文会继续保留。'}</p><div>{batchMode && <button className="kl-primary" disabled={!checkedIds.length || !knowledge?.supported} onClick={() => generateFor(checkedIds)}>生成知识笔记</button>}<button className="kl-secondary" disabled={!knowledge?.supported} onClick={() => { setBatchMode(!batchMode); setCheckedIds([]); }}>{batchMode ? '取消选择' : '批量整理'}</button></div></div>}
       <div className={`kl-body ${detail || detailLoading ? 'with-detail' : ''}`}>
         {showNavigation && <aside className="kl-nav" id="kl-directory" aria-label="分类与专题">
           <div className="kl-directory-title"><span>分类与专题</span><button className="kl-icon-button" aria-label="关闭分类导航" onClick={() => setShowNavigation(false)}><Icon name="close" size={16} /></button></div>
@@ -157,10 +171,10 @@ export function App() {
           {loading && !items.length ? <div className="kl-empty"><span className="kl-spinner" />正在读取资料库…</div> : !items.length ? <div className="kl-empty">
             <Icon name={filter.trashed ? 'trash' : 'inbox'} size={28} /><h2>{filter.trashed ? '回收站中没有匹配的资料' : query || Object.values(filter).some(Boolean) ? '没有找到匹配的资料' : '还没有资料，收集的内容会显示在这里'}</h2>
             {query && <p>试试其他关键词，或切换分类。</p>}<button className="kl-secondary" onClick={() => query || Object.values(filter).some(Boolean) ? (setQuery(''), chooseFilter({})) : setEditor({ mode: 'capture' })}>{query || Object.values(filter).some(Boolean) ? '查看全部资料' : '收集第一份资料'}</button>
-          </div> : items.map(item => <div className="kl-item-row" key={item.id}><button className={`kl-item ${selected === item.id ? 'selected' : ''}`} onClick={() => { setAnchor(undefined); setSelected(item.id); }}>
+          </div> : items.map(item => <div className={`kl-item-row ${batchMode ? 'kl-selectable' : ''}`} key={item.id}>{batchMode && <input type="checkbox" className="kl-material-checkbox" aria-label={`选择 ${item.title}`} checked={checkedIds.includes(item.id)} disabled={item.kind === 'note' || item.status !== 'ready' || (!!checkedIds.length && checkedIds.length >= 10 && !checkedIds.includes(item.id))} onChange={e => setCheckedIds(ids => e.target.checked ? [...ids, item.id] : ids.filter(id => id !== item.id))} />}<button className={`kl-item ${selected === item.id ? 'selected' : ''}`} onClick={() => { setAnchor(undefined); setSelected(item.id); }}>
             <div className="kl-item-top"><span className={`kl-type kl-type-${item.kind}`}><Icon name={kinds[item.kind].icon} size={15} />{kinds[item.kind].label}</span><time>{date(item.createdAt)}</time></div>
             <h2>{item.title}</h2><p>{item.excerpt || item.extraction}</p>
-            <div className="kl-item-bottom"><span className="kl-category"><Icon name="folder" size={13} />{item.category}</span>{item.tags.slice(0, 2).map(tag => <span className="kl-chip" key={tag}>{tag}</span>)}{item.status === 'stored' && <span className="kl-stored">仅归档</span>}<Icon name="arrow" size={15} /></div>
+            <div className="kl-item-bottom"><span className="kl-category"><Icon name="folder" size={13} />{item.category}</span>{item.tags.slice(0, 2).map(tag => <span className="kl-chip" key={tag}>{tag}</span>)}{item.status === 'stored' && <span className="kl-stored">仅归档</span>}{!item.deletedAt && item.kind !== 'note' && item.status === 'ready' && knowledge?.supported && <KnowledgeBadge state={knowledge.states[item.id]} />}<Icon name="arrow" size={15} /></div>
           </button><button className={`kl-icon-button kl-row-action ${item.deletedAt ? '' : 'kl-danger'}`} title={item.deletedAt ? '恢复资料' : '删除资料'} aria-label={`${item.deletedAt ? '恢复' : '删除'} ${item.title}`} disabled={!stats || !!restoring} onClick={() => item.deletedAt ? void restoreItem(item.id) : askDelete(item)}><Icon name={item.deletedAt ? 'restore' : 'trash'} size={16} /></button></div>)}
           {items.length < total && <button className="kl-load-more" onClick={() => setLimit(v => Math.min(100, v + 40))} disabled={limit >= 100}>{limit >= 100 ? '请缩小搜索范围（最多显示 100 条）' : '加载更多'}</button>}
         </section>
@@ -173,6 +187,7 @@ export function App() {
             {detail.sourceNote && <aside className="kl-source-note">{detail.sourceNote}</aside>}
             {detail.deletedAt && <div className="kl-notice"><Icon name="trash" /><div><strong>这份资料在回收站</strong><p>原文与来源引用仍可查看，恢复后回到原分类。</p></div></div>}
             {detail.status === 'stored' && <div className="kl-notice"><Icon name="file" /><div><strong>原文件已安全归档</strong><p>{detail.extraction}</p></div></div>}
+            {!detail.deletedAt && detail.kind !== 'note' && detail.status === 'ready' && <div className="kl-knowledge-source"><div><KnowledgeBadge state={knowledge?.states[detail.id]} /><span>从这份资料形成理解、方法与待验证的问题。</span></div><div className="kl-knowledge-actions">{['running', 'draft'].includes(knowledge?.states[detail.id]?.status || '') ? <button className="kl-secondary" onClick={() => stats && setKnowledgeOpen({ root: stats.root, jobId: knowledge?.states[detail.id]?.jobId })}>查看整理任务</button> : <button className="kl-secondary" disabled={!knowledge?.supported} onClick={() => generateFor([detail.id])}>生成知识笔记</button>}{knowledge?.states[detail.id]?.noteIds.map(id => <button key={id} className="kl-secondary" onClick={() => openKnowledgeSource(id)}>查看知识笔记<Icon name="arrow" size={14} /></button>)}</div>{!knowledge?.supported && <p className="kl-muted">请重启资料库服务以启用知识整理。</p>}</div>}
             <div className="kl-content">{detail.segments.map(segment => <div className={`kl-segment ${anchor === segment.id ? 'kl-cited' : ''}`} key={segment.id} id={segment.id} data-segment-id={segment.id}>
               <div className="kl-segment-line"><span>{segment.startSeconds !== undefined ? time(segment.startSeconds) : segment.id}</span><button title="摘录为笔记" aria-label={`摘录 ${segment.id} 为笔记`} onClick={() => setEditor({ mode: 'note', source: detail, segment })}><Icon name="note" size={14} /></button><button title="复制段落引用" aria-label={`复制 ${segment.id} 引用`} onClick={() => void copy(`library://${detail.id}/${segment.id}`)}><Icon name="copy" size={14} /></button></div>
               {/^#{1,6}\s/.test(segment.text) ? <h3>{segment.text.replace(/^#{1,6}\s+/, '')}</h3> : <p>{segment.text}</p>}
@@ -183,6 +198,8 @@ export function App() {
         </section>}
       </div>
     </main>
+    {generation && knowledge && <StartKnowledgeDialog root={generation.root} sourceIds={generation.sourceIds} model={knowledge} onClose={() => setGeneration(undefined)} onCreated={job => { setGeneration(undefined); setCheckedIds([]); setBatchMode(false); setKnowledgeOpen({ root: generation.root, jobId: job.id }); refresh(); }} />}
+    {knowledgeOpen && knowledge && <KnowledgeJobsDialog root={knowledgeOpen.root} jobId={knowledgeOpen.jobId} overview={knowledge} onClose={() => setKnowledgeOpen(undefined)} onRefresh={refresh} onRegenerate={ids => { setKnowledgeOpen(undefined); generateFor(ids); }} onOpenSource={openKnowledgeSource} onSaved={id => { openKnowledgeSource(id); notify('知识笔记已保存，原始资料已保留'); }} onNotify={notify} />}
     {editor && <EditorDialog editor={editor} categories={stats?.categories.map(c => c.name) || []} onClose={() => setEditor(undefined)} onSaved={result => {
       setEditor(undefined); refresh();
       if (result.material) { chooseFilter({}); setQuery(''); setSelected(result.material.id); notify(result.duplicate ? '资料已存在，已打开原记录' : '已保存到本地资料库'); }
@@ -314,27 +331,6 @@ function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt, onProxy
       {error && <p className="kl-settings-error" role="alert">{error}</p>}
     </div>
   </Dialog>;
-}
-
-function Dialog({ title, description, onClose, children }: { title: string; description: string; onClose: () => void; children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(onClose); closeRef.current = onClose;
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    const timer = setTimeout(() => ref.current?.querySelector<HTMLElement>('input,textarea,button')?.focus(), 0);
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeRef.current();
-      if (event.key === 'Tab') {
-        const elements = Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select,a[href]') || []);
-        const first = elements[0], last = elements[elements.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-      }
-    };
-    document.addEventListener('keydown', key);
-    return () => { clearTimeout(timer); document.removeEventListener('keydown', key); previous?.focus(); };
-  }, []);
-  return <div className="kl-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><div className="kl-dialog" role="dialog" aria-modal="true" aria-label={title} ref={ref}><header><div><h2>{title}</h2><p>{description}</p></div><button aria-label="关闭弹窗" onClick={onClose}><Icon name="close" /></button></header>{children}</div></div>;
 }
 
 function EditorDialog({ editor, categories, onClose, onSaved }: { editor: Editor; categories: string[]; onClose: () => void; onSaved: (result: any) => void }) {
