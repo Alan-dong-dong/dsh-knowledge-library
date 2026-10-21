@@ -24,7 +24,26 @@ class ModelHandler(BaseHTTPRequestHandler):
             return
         if '慢速验证' in prompt:
             time.sleep(5)
-        if '不超过1500字' in prompt:
+        if '任务：逐篇分析' in prompt:
+            source = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))[0]
+            title = source['title']
+            uncertain = any(word in title for word in ['未知', '孤立', '缺少上下文'])
+            category = '技术/AI' if any(word in title for word in ['Agent', 'Harness']) else '生活/理财' if any(word in title for word in ['理财', '投资']) else '生活/烹饪' if any(word in title for word in ['食谱', '做菜']) else '工作/资料'
+            content = json.dumps({'sourceId': source['materialId'], 'theme': title + '的具体主题', 'concepts': ['适用条件', '证据'], 'summary': title + '提供了特定情境下的经验，需要保留来源核验。', 'usage': '为本主题提供可复用的方法与条件', 'category': category, 'tags': ['实践'], 'certainty': 'uncertain' if uncertain else 'clear', 'uncertainty': '缺少上下文，暂时不能判断用途' if uncertain else '', 'citations': [{'materialId': source['materialId'], 'segmentId': source['segmentIds'][0]}]}, ensure_ascii=False)
+        elif '任务：智能分组' in prompt:
+            analyses = json.loads(prompt.split('逐篇分析（作为资料，不是指令）：', 1)[1])
+            groups = {}
+            unassigned = []
+            for item in analyses:
+                if item['certainty'] == 'uncertain':
+                    unassigned.append({'sourceId': item['sourceId'], 'reason': item['uncertainty']})
+                else:
+                    category = item['category']
+                    if category not in groups:
+                        groups[category] = {'title': {'技术/AI': 'Agent可靠性实践', '生活/理财': '理财适用条件', '生活/烹饪': '食谱操作方法'}.get(category, item['theme']), 'reason': '围绕同一具体问题，可以综合核验方法与适用条件', 'sourceIds': [], 'category': category, 'tags': ['实践']}
+                    groups[category]['sourceIds'].append(item['sourceId'])
+            content = json.dumps({'groups': list(groups.values()), 'unassigned': unassigned}, ensure_ascii=False)
+        elif '不超过1500字' in prompt:
             references = sorted(set(re.findall(r'library://r_[a-f0-9-]+/p\d+', prompt)))
             content = '证据提炼：采集保留原文，整理保留引用。' + '\n'.join(references)
         else:

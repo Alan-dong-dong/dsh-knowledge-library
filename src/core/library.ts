@@ -225,6 +225,7 @@ export class Library {
     const item = this.get(id);
     if (item.deletedAt) throw new Error('请先从回收站恢复资料后再编辑');
     const { content, segments: _segments, path: oldPath, ...meta } = item;
+    const previous = structuredClone(meta);
     if (fields.title !== undefined) {
       if (!cleanString(fields.title)) throw new Error('标题不能为空');
       meta.title = cleanString(fields.title, 300);
@@ -236,11 +237,25 @@ export class Library {
     meta.updatedAt = now();
     const path = join(this.root, 'materials', ...meta.category.split('/'), id);
     this.assertContained(path);
-    if (path !== oldPath) { mkdirSync(dirname(path), { recursive: true }); renameSync(oldPath, path); }
-    atomicJson(join(path, 'metadata.json'), meta);
+    let moved = false; let written = false;
     this.db.exec('BEGIN IMMEDIATE');
-    try { this.index(meta, path, content); this.db.exec('COMMIT'); } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    try {
+      if (path !== oldPath) { mkdirSync(dirname(path), { recursive: true }); renameSync(oldPath, path); moved = true; }
+      atomicJson(join(path, 'metadata.json'), meta); written = true;
+      this.index(meta, path, content); this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      if (written) atomicJson(join(path, 'metadata.json'), previous);
+      if (moved) renameSync(path, oldPath);
+      throw error;
+    }
     return this.get(id);
+  }
+  validateCategoryMove(id: string, category: string): void {
+    const source = this.get(id);
+    const target = join(this.root, 'materials', ...categoryName(category).split('/'), id);
+    this.assertContained(target);
+    if (resolve(target) !== resolve(source.path) && existsSync(target)) throw new Error('目标分类已有同ID目录，请检查后重试');
   }
   trash(id: string): MaterialDetail { return this.setDeleted(id, true); }
   restore(id: string): MaterialDetail { return this.setDeleted(id, false); }

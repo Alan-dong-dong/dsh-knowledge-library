@@ -62,7 +62,7 @@ test('batch generation covers long content including the end, and never silently
   try {
     const long = f.library.captureText('起始证据。\n\n' + '跨段内容需要完整处理。'.repeat(1800) + '\n\n末尾关键条件XYZ', { title: '长文' }).material;
     f.setSources([...f.sources, long]);
-    const job = f.knowledge.add(f.sources.map(s => s.id), '跨来源综合');
+    const job = f.knowledge.add(f.sources.map(s => s.id), '跨来源综合', 'compose');
     await f.knowledge.idle();
     assert.equal(f.knowledge.get(job.id).status, 'draft', f.knowledge.get(job.id).error);
     assert.ok(f.requests.length > 2);
@@ -86,6 +86,23 @@ test('unconfigured models, archived-only files, notes and trashed sources are re
     f.library.trash(f.sources[0].id);
     assert.throws(() => f.knowledge.add([f.sources[0].id]), /回收站/);
     assert.equal(f.requests.length, 0);
+  } finally { await f.cleanup(); }
+});
+
+test('a pre-grouping multi-source draft without mode or metadata snapshots remains confirmable after upgrade', async () => {
+  const f = fixture();
+  try {
+    f.setSources([...f.sources, f.library.captureText('第二份同主题资料保留其旧版引用。').material]);
+    const job = f.knowledge.add(f.sources.map(s => s.id), '旧版直接综合', 'compose'); await f.knowledge.idle();
+    const file = join(f.root, '.system', 'knowledge-jobs.json');
+    await f.reopen(() => {
+      const records = JSON.parse(readFileSync(file, 'utf8')); delete records[0].mode; delete records[0].modelCalls;
+      for (const source of records[0].sources) { delete source.category; delete source.tags; }
+      writeFileSync(file, JSON.stringify(records));
+    });
+    assert.equal(f.knowledge.get(job.id).status, 'draft');
+    const saved = f.knowledge.confirm(job.id, 1);
+    assert.equal(saved.material.citations.length, 2); assert.equal(f.library.stats().notes, 1);
   } finally { await f.cleanup(); }
 });
 

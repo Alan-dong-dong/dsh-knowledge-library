@@ -82,29 +82,55 @@ export interface KnowledgeDraft {
   citations: Citation[];
   category?: string;
 }
-export interface KnowledgeSource { id: string; title: string; fingerprint: string }
+export interface KnowledgeSource { id: string; title: string; fingerprint: string; category?: string; tags?: string[] }
+export interface SourceAnalysis {
+  sourceId: string;
+  theme: string;
+  concepts: string[];
+  summary: string;
+  usage: string;
+  category: string;
+  tags: string[];
+  certainty: 'clear' | 'uncertain';
+  uncertainty: string;
+  citations: Citation[];
+}
+export interface KnowledgeGroup { id: string; title: string; reason: string; sourceIds: string[]; category: string; tags: string[] }
+export interface GroupingPlan { groups: KnowledgeGroup[]; unassigned: Array<{ sourceId: string; reason: string }>; applyClassification?: boolean }
+export interface ClassificationStep { sourceId: string; before: { category: string; tags: string[] }; after: { category: string; tags: string[] }; done: boolean }
+export interface ClassificationJournal { apply: boolean; version: number; direction: 'apply' | 'rollback'; steps: ClassificationStep[] }
 export interface KnowledgeJob {
   id: string;
   sourceIds: string[];
   sources: KnowledgeSource[];
   topic: string;
-  status: 'queued' | 'running' | 'draft' | 'completed' | 'failed' | 'cancelled' | 'discarded';
+  status: 'queued' | 'running' | 'grouping' | 'classifying' | 'grouped' | 'draft' | 'completed' | 'failed' | 'cancelled' | 'discarded';
+  mode?: 'compose' | 'smart';
+  parentId?: string;
+  groupId?: string;
+  analyses?: SourceAnalysis[];
+  plan?: GroupingPlan;
+  planVersion?: number;
+  classification?: ClassificationJournal;
+  children?: Array<{ groupId: string; jobId: string }>;
   createdAt: string;
   updatedAt: string;
   progress: string;
   model?: string;
+  modelCalls?: number;
   error?: string;
   draft?: KnowledgeDraft;
   draftVersion: number;
   noteId?: string;
 }
 export interface KnowledgeState {
-  status: 'pending' | 'running' | 'draft' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'grouping' | 'draft' | 'completed' | 'failed';
   jobId?: string;
   noteIds: string[];
 }
 export interface KnowledgeOverview {
   supported: boolean;
+  smartSupported?: boolean;
   available: boolean;
   model?: string;
   reason?: string;

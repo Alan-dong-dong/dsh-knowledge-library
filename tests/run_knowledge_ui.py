@@ -40,10 +40,11 @@ def run(restart=False):
                 raise RuntimeError('Preview not ready')
             if restart:
                 env['KNOWLEDGE_UI_RESTART'] = '1'
-            result = subprocess.run([sys.executable, 'tests/ui_knowledge.py'], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
-            (runtime / ('ui-restart.log' if restart else 'ui.log')).write_text(result.stdout, encoding='utf-8')
-            print(result.stdout, flush=True)
-            result.check_returncode()
+            for script in ['tests/ui_knowledge.py', 'tests/ui_grouping.py']:
+                result = subprocess.run([sys.executable, script], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
+                (runtime / (('restart-' if restart else '') + Path(script).stem + '.log')).write_text(result.stdout, encoding='utf-8')
+                print(result.stdout, flush=True)
+                result.check_returncode()
         finally:
             proc.terminate()
             proc.wait(timeout=15)
@@ -51,7 +52,9 @@ def run(restart=False):
 
 try:
     run()
+    initial_calls = len(provider.calls)
     run(restart=True)
+    assert len(provider.calls) == initial_calls, 'Restart must not repeat paid model calls'
     (project / 'test-results/knowledge-model-calls.json').write_text(json.dumps({'count': len(provider.calls), 'protocol': 'actual HTTP /v1/chat/completions', 'externalProvider': False}), encoding='utf-8')
     print('PASS: isolated knowledge UI, actual compatible HTTP calls and restart persistence.')
 finally:

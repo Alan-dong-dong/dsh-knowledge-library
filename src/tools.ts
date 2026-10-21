@@ -65,9 +65,10 @@ export function createTools(library: Library, queue: ImportQueue, knowledge?: Kn
     }, args => args.retryId ? queue.retry(args.retryId) : queue.list()),
     tool('library_overview', '查看资料库统计、分类、专题、标签和索引警告。', {}, () => library.stats(), true),
     ...(knowledge ? [
-      tool('library_knowledge_generate', '选择1至10份原始资料，调用宿主默认模型生成知识笔记草稿；保留来源，待用户在资料库中编辑确认后保存。不会自动发布笔记。', {
+      tool('library_knowledge_generate', '选择1至10份原始资料。多篇默认smart：逐篇分析、智能分组，等待用户确认分类后按组生成独立草稿；单篇默认compose直接生成草稿。已知同主题也可显式compose。正式笔记均待用户确认，不自动发布。', {
         sourceIds: { type: 'array', required: true, items: { type: 'string' } }, topic: { type: 'string', description: '围绕什么问题整理，可选' },
-      }, args => knowledge.add(args.sourceIds, args.topic)),
+        mode: { type: 'string', enum: ['smart', 'compose'], description: 'smart智能分组，compose同主题直接综合；省略时多篇smart、单篇compose' },
+      }, args => knowledge.add(args.sourceIds, args.topic, args.mode)),
       tool('library_knowledge_status', '查看知识整理状态、失败原因和待确认草稿；提醒用户到资料库确认保存，不代替用户确认。', {
         id: { type: 'string', description: '知识整理任务ID；省略查看总览' },
       }, args => args.id ? knowledge.get(args.id) : knowledge.overview(), true),

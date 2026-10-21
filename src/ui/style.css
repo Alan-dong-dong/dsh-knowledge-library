@@ -99,7 +99,7 @@
 .kl-knowledge-toolbar > div, .kl-knowledge-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .kl-knowledge-toolbar > div { flex: none; }
 .kl-knowledge-badge { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 5px; background: var(--kl-hover); color: var(--kl-muted); font-size: 11px; line-height: 18px; white-space: nowrap; font-weight: 400; }
-.kl-knowledge-badge:is(.draft, .running, .queued) { color: var(--kl-link); }
+.kl-knowledge-badge:is(.draft, .running, .queued, .grouping, .classifying) { color: var(--kl-link); }
 .kl-knowledge-badge.failed { color: var(--kl-error); }
 .kl-knowledge-badge.completed { color: var(--kl-ink); }
 .kl-item-bottom { flex-wrap: wrap; }
@@ -137,6 +137,36 @@
 .kl-knowledge-citations summary { cursor: pointer; }
 .kl-knowledge-citations button { border: 0; background: transparent; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 8px 0; }
 .kl-knowledge-citations button span { min-width: 0; overflow-wrap: anywhere; }
+.kl-knowledge-mode { margin: 16px 0; padding: 12px; border: .5px solid var(--kl-line); border-radius: 8px; }
+.kl-knowledge-mode legend { padding: 0 4px; font-size: 12px; color: var(--kl-muted); }
+.kl-knowledge-mode label { flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.kl-knowledge-mode input { width: 15px; padding: 0; accent-color: var(--kl-primary); }
+.kl-knowledge-mode small { margin-left: auto; }
+.kl-grouping-editor { margin-top: 18px; }
+.kl-grouping-summary { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+.kl-grouping-summary b { font-weight: 500; }
+.kl-grouping-summary span { color: var(--kl-muted); }
+.kl-grouping-group { border: .5px solid var(--kl-line); border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+.kl-grouping-group-title, .kl-grouping-source-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.kl-grouping-group-title { font-size: 12px; color: var(--kl-muted); }
+.kl-grouping-group ul { margin: 10px 0 0; padding-left: 18px; color: var(--kl-muted); font-size: 12px; line-height: 1.8; }
+.kl-grouping-group li { overflow-wrap: anywhere; }
+.kl-grouping-editor label { display: flex; flex-direction: column; gap: 7px; margin: 12px 0; font-size: 12px; }
+.kl-grouping-editor :is(input,textarea,select) { width: 100%; min-width: 0; border: .5px solid var(--kl-line); border-radius: 8px; padding: 9px 10px; background: var(--kl-bg); color: var(--kl-ink); font: inherit; }
+.kl-grouping-editor textarea { line-height: 1.7; resize: vertical; }
+.kl-grouping-reason { margin: 8px 0; font-size: 12px; line-height: 1.8; color: var(--kl-muted); overflow-wrap: anywhere; }
+.kl-grouping-settings summary, .kl-grouping-source summary { cursor: pointer; font-size: 12px; color: var(--kl-muted); }
+.kl-grouping-settings summary span { margin-left: 8px; color: var(--kl-ink); }
+.kl-grouping-section-title { font-size: 14px; font-weight: 500; margin: 24px 0 10px; }
+.kl-grouping-source { border-top: .5px solid var(--kl-line); padding: 14px 0; }
+.kl-grouping-source-title strong { font-size: 13px; font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.kl-grouping-source p, .kl-grouping-pending p, .kl-grouping-recovery p { font-size: 12px; line-height: 1.8; color: var(--kl-muted); overflow-wrap: anywhere; }
+.kl-grouping-source details button { margin-top: 8px; }
+.kl-grouping-editor .kl-grouping-sync { flex-direction: row; align-items: center; gap: 8px; margin-top: 20px; }
+.kl-grouping-sync input { width: 15px; height: 15px; padding: 0; accent-color: var(--kl-primary); flex: none; }
+.kl-grouping-editor footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.kl-grouping-recovery { border-left: 2px solid var(--kl-link); padding-left: 12px; font-size: 13px; }
+.kl-grouping-pending { border-top: .5px solid var(--kl-line); padding-top: 14px; font-size: 13px; }
 .kl-body { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .kl-list { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 0 calc(var(--kl-gutter) - 8px) 24px; }
 .kl-body.with-detail .kl-list { flex: 0 0 38%; padding: 0 16px 24px calc(var(--kl-gutter) - 8px); }

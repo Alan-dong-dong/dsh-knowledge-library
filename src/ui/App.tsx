@@ -34,7 +34,7 @@ export function App() {
   const [knowledge, setKnowledge] = useState<KnowledgeOverview>();
   const [batchMode, setBatchMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
-  const [generation, setGeneration] = useState<{ root: string; sourceIds: string[] }>();
+  const [generation, setGeneration] = useState<{ root: string; sourceIds: string[]; mode?: 'smart' | 'compose' }>();
   const [knowledgeOpen, setKnowledgeOpen] = useState<{ root: string; jobId?: string }>();
   const [showJobs, setShowJobs] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
@@ -89,7 +89,7 @@ export function App() {
   }, [detail, anchor]);
   const pending = jobs.filter(j => ['queued', 'running'].includes(j.status)).length;
   const knowledgePending = knowledge?.jobs.filter(j => ['queued', 'running'].includes(j.status)).length || 0;
-  const draftCount = knowledge?.jobs.filter(j => j.status === 'draft').length || 0;
+  const draftCount = knowledge?.jobs.filter(j => ['draft', 'grouping'].includes(j.status)).length || 0;
   useEffect(() => {
     if (!pending && !knowledgePending) return;
     const interval = setInterval(refresh, 2500);
@@ -128,8 +128,8 @@ export function App() {
   function openKnowledgeSource(id: string, segmentId?: string) {
     setKnowledgeOpen(undefined); chooseFilter({}); setQuery(''); setSelected(id); setAnchor(segmentId); refresh();
   }
-  function generateFor(ids: string[]) {
-    if (stats) setGeneration({ root: stats.root, sourceIds: ids });
+  function generateFor(ids: string[], mode?: 'smart' | 'compose') {
+    if (stats) setGeneration({ root: stats.root, sourceIds: ids, mode });
   }
   const currentTitle = filter.trashed ? '回收站' : filter.category || filter.collection || (filter.tag ? `标签 · ${filter.tag}` : filter.kind === 'note' ? '知识笔记' : '全部资料');
   return <div className="kl-app">
@@ -152,7 +152,7 @@ export function App() {
       {!!error && <div className="kl-error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
       <div className="kl-filterbar"><span><b>{total}</b> 份资料{query && ` · “${query}”`}</span><div><select aria-label="按类型筛选" value={filter.kind || ''} onChange={e => { setFilter({ ...filter, kind: e.target.value || undefined }); setLimit(40); }}><option value="">所有类型</option>{Object.entries(kinds).map(([value, kind]) => <option key={value} value={value}>{kind.label}</option>)}</select><span className="kl-sort-label">最近更新 ↓</span></div></div>
       {filter.trashed && <div className="kl-trash-toolbar"><p>{stats?.canEmptyTrash ? (stats.purgePending ? `${stats.purgePending} 份资料的文件清理未完成，可再次清空以重试。` : '清空将永久删除整个回收站，不受当前搜索和类型筛选限制。') : '请重启资料库服务以启用清空回收站。'}</p><button className="kl-secondary kl-danger" disabled={!stats?.canEmptyTrash || !(stats.trashed || stats.purgePending) || !!restoring} onClick={() => stats && setEmptyRoot(stats.root)}><Icon name="trash" size={15} />清空回收站</button></div>}
-      {!filter.trashed && filter.kind !== 'note' && <div className="kl-knowledge-toolbar"><p>{batchMode ? `已选择 ${checkedIds.length} / 10 份资料；切换搜索或分类会清除选择。` : '把资料整理为带来源的知识笔记。原文会继续保留。'}</p><div>{batchMode && <button className="kl-primary" disabled={!checkedIds.length || !knowledge?.supported} onClick={() => generateFor(checkedIds)}>生成知识笔记</button>}<button className="kl-secondary" disabled={!knowledge?.supported} onClick={() => { setBatchMode(!batchMode); setCheckedIds([]); }}>{batchMode ? '取消选择' : '批量整理'}</button></div></div>}
+      {!filter.trashed && filter.kind !== 'note' && <div className="kl-knowledge-toolbar"><p>{batchMode ? `已选择 ${checkedIds.length} / 10 份资料；切换搜索或分类会清除选择。` : knowledge?.smartSupported ? '零散资料先智能分组，再按组形成知识笔记。' : '请重启资料库服务以启用智能分组。'}</p><div>{batchMode && <button className="kl-primary" disabled={!checkedIds.length || !knowledge?.smartSupported} onClick={() => generateFor(checkedIds, 'smart')}>智能分析分组</button>}<button className="kl-secondary" disabled={!knowledge?.smartSupported} onClick={() => { setBatchMode(!batchMode); setCheckedIds([]); }}>{batchMode ? '取消选择' : '智能整理'}</button></div></div>}
       <div className={`kl-body ${detail || detailLoading ? 'with-detail' : ''}`}>
         {showNavigation && <aside className="kl-nav" id="kl-directory" aria-label="分类与专题">
           <div className="kl-directory-title"><span>分类与专题</span><button className="kl-icon-button" aria-label="关闭分类导航" onClick={() => setShowNavigation(false)}><Icon name="close" size={16} /></button></div>
@@ -187,7 +187,7 @@ export function App() {
             {detail.sourceNote && <aside className="kl-source-note">{detail.sourceNote}</aside>}
             {detail.deletedAt && <div className="kl-notice"><Icon name="trash" /><div><strong>这份资料在回收站</strong><p>原文与来源引用仍可查看，恢复后回到原分类。</p></div></div>}
             {detail.status === 'stored' && <div className="kl-notice"><Icon name="file" /><div><strong>原文件已安全归档</strong><p>{detail.extraction}</p></div></div>}
-            {!detail.deletedAt && detail.kind !== 'note' && detail.status === 'ready' && <div className="kl-knowledge-source"><div><KnowledgeBadge state={knowledge?.states[detail.id]} /><span>从这份资料形成理解、方法与待验证的问题。</span></div><div className="kl-knowledge-actions">{['running', 'draft'].includes(knowledge?.states[detail.id]?.status || '') ? <button className="kl-secondary" onClick={() => stats && setKnowledgeOpen({ root: stats.root, jobId: knowledge?.states[detail.id]?.jobId })}>查看整理任务</button> : <button className="kl-secondary" disabled={!knowledge?.supported} onClick={() => generateFor([detail.id])}>生成知识笔记</button>}{knowledge?.states[detail.id]?.noteIds.map(id => <button key={id} className="kl-secondary" onClick={() => openKnowledgeSource(id)}>查看知识笔记<Icon name="arrow" size={14} /></button>)}</div>{!knowledge?.supported && <p className="kl-muted">请重启资料库服务以启用知识整理。</p>}</div>}
+            {!detail.deletedAt && detail.kind !== 'note' && detail.status === 'ready' && <div className="kl-knowledge-source"><div><KnowledgeBadge state={knowledge?.states[detail.id]} /><span>从这份资料形成理解、方法与待验证的问题。</span></div><div className="kl-knowledge-actions">{['running', 'draft', 'grouping'].includes(knowledge?.states[detail.id]?.status || '') ? <button className="kl-secondary" onClick={() => stats && setKnowledgeOpen({ root: stats.root, jobId: knowledge?.states[detail.id]?.jobId })}>{knowledge?.states[detail.id]?.status === 'grouping' ? '查看分组方案' : '查看整理任务'}</button> : <button className="kl-secondary" disabled={!knowledge?.supported} onClick={() => generateFor([detail.id])}>生成知识笔记</button>}{knowledge?.states[detail.id]?.noteIds.map(id => <button key={id} className="kl-secondary" onClick={() => openKnowledgeSource(id)}>查看知识笔记<Icon name="arrow" size={14} /></button>)}</div>{!knowledge?.supported && <p className="kl-muted">请重启资料库服务以启用知识整理。</p>}</div>}
             <div className="kl-content">{detail.segments.map(segment => <div className={`kl-segment ${anchor === segment.id ? 'kl-cited' : ''}`} key={segment.id} id={segment.id} data-segment-id={segment.id}>
               <div className="kl-segment-line"><span>{segment.startSeconds !== undefined ? time(segment.startSeconds) : segment.id}</span><button title="摘录为笔记" aria-label={`摘录 ${segment.id} 为笔记`} onClick={() => setEditor({ mode: 'note', source: detail, segment })}><Icon name="note" size={14} /></button><button title="复制段落引用" aria-label={`复制 ${segment.id} 引用`} onClick={() => void copy(`library://${detail.id}/${segment.id}`)}><Icon name="copy" size={14} /></button></div>
               {/^#{1,6}\s/.test(segment.text) ? <h3>{segment.text.replace(/^#{1,6}\s+/, '')}</h3> : <p>{segment.text}</p>}
@@ -198,8 +198,8 @@ export function App() {
         </section>}
       </div>
     </main>
-    {generation && knowledge && <StartKnowledgeDialog root={generation.root} sourceIds={generation.sourceIds} model={knowledge} onClose={() => setGeneration(undefined)} onCreated={job => { setGeneration(undefined); setCheckedIds([]); setBatchMode(false); setKnowledgeOpen({ root: generation.root, jobId: job.id }); refresh(); }} />}
-    {knowledgeOpen && knowledge && <KnowledgeJobsDialog root={knowledgeOpen.root} jobId={knowledgeOpen.jobId} overview={knowledge} onClose={() => setKnowledgeOpen(undefined)} onRefresh={refresh} onRegenerate={ids => { setKnowledgeOpen(undefined); generateFor(ids); }} onOpenSource={openKnowledgeSource} onSaved={id => { openKnowledgeSource(id); notify('知识笔记已保存，原始资料已保留'); }} onNotify={notify} />}
+    {generation && knowledge && <StartKnowledgeDialog root={generation.root} sourceIds={generation.sourceIds} model={knowledge} initialMode={generation.mode} onClose={() => setGeneration(undefined)} onCreated={job => { setGeneration(undefined); setCheckedIds([]); setBatchMode(false); setKnowledgeOpen({ root: generation.root, jobId: job.id }); refresh(); }} />}
+    {knowledgeOpen && knowledge && <KnowledgeJobsDialog root={knowledgeOpen.root} jobId={knowledgeOpen.jobId} overview={knowledge} onClose={() => setKnowledgeOpen(undefined)} onRefresh={refresh} onRegenerate={(ids, mode) => { setKnowledgeOpen(undefined); generateFor(ids, mode); }} onOpenSource={openKnowledgeSource} onSaved={id => { openKnowledgeSource(id); notify('知识笔记已保存，原始资料已保留'); }} onNotify={notify} />}
     {editor && <EditorDialog editor={editor} categories={stats?.categories.map(c => c.name) || []} onClose={() => setEditor(undefined)} onSaved={result => {
       setEditor(undefined); refresh();
       if (result.material) { chooseFilter({}); setQuery(''); setSelected(result.material.id); notify(result.duplicate ? '资料已存在，已打开原记录' : '已保存到本地资料库'); }

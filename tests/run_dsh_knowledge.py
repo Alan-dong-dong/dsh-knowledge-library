@@ -46,10 +46,11 @@ def run(restart=False):
                 raise RuntimeError('Native knowledge model not ready; inspect ' + str(log_path))
             if restart:
                 env['KNOWLEDGE_UI_RESTART'] = '1'
-            result = subprocess.run([sys.executable, 'tests/ui_knowledge.py'], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
-            (runtime / ('ui-restart.log' if restart else 'ui.log')).write_text(result.stdout, encoding='utf-8')
-            print(result.stdout, flush=True)
-            result.check_returncode()
+            for script in ['tests/ui_knowledge.py', 'tests/ui_grouping.py']:
+                result = subprocess.run([sys.executable, script], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
+                (runtime / (('restart-' if restart else '') + Path(script).stem + '.log')).write_text(result.stdout, encoding='utf-8')
+                print(result.stdout, flush=True)
+                result.check_returncode()
         finally:
             if proc.poll() is None:
                 if os.name == 'nt':
@@ -66,7 +67,9 @@ try:
     patch = Path(env['DSH_HOME']) / 'profiles/web/cordis.patch.yml'
     patch.write_text('- id: knowledge-library\n  config:\n    root: ' + json.dumps((runtime / 'library').as_posix()) + '\n- id: agent-default-model\n  config:\n    provider: knowledge-test\n    model: knowledge-fixture\n- insert:\n    - id: knowledge-model-fixture\n      name: ' + json.dumps((project / 'tests/fixtures/knowledge-host-model.mjs').as_posix()) + '\n', encoding='utf-8')
     run()
+    initial_calls = len(provider.calls)
     run(restart=True)
+    assert len(provider.calls) == initial_calls, 'Restart must not repeat model calls'
     print('PASS: native Harness model service, knowledge UI and full host restart; local model fixture only.')
 finally:
     provider.shutdown()

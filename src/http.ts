@@ -76,9 +76,18 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
         if (path.startsWith('/knowledge/')) {
           if (!knowledge) throw new Error('当前服务未启用知识整理，请重启资料库服务');
           if (data.expectedRoot !== library.root) throw new Error('资料库目录已改变，请刷新后再操作');
-          if (path === '/knowledge/jobs' && req.method === 'POST') { send(res, 202, knowledge.add(data.sourceIds, data.topic)); return; }
-          const job = path.match(/^\/knowledge\/jobs\/(knowledge_[a-f0-9-]+)(?:\/(cancel|discard|confirm))?$/);
+          if (path === '/knowledge/jobs' && req.method === 'POST') { send(res, 202, knowledge.add(data.sourceIds, data.topic, data.mode)); return; }
+          const job = path.match(/^\/knowledge\/jobs\/(knowledge_[a-f0-9-]+)(?:\/(cancel|discard|confirm|plan|confirm-plan|rollback-plan))?$/);
           if (job) {
+            if (req.method === 'PATCH' && job[2] === 'plan') { send(res, 200, knowledge.editPlan(job[1], data.plan, data.version)); return; }
+            if (req.method === 'POST' && job[2] === 'confirm-plan') {
+              if (data.confirmed !== true) throw new Error('请确认分组与分类修改后再生成草稿');
+              send(res, 200, knowledge.confirmPlan(job[1], data.version, data.applyClassification, data.expectedModel)); return;
+            }
+            if (req.method === 'POST' && job[2] === 'rollback-plan') {
+              if (data.confirmed !== true) throw new Error('请确认回退未完成的分类修改');
+              send(res, 200, knowledge.rollbackPlan(job[1])); return;
+            }
             if (req.method === 'PATCH' && !job[2]) { send(res, 200, knowledge.edit(job[1], data.draft, data.version)); return; }
             if (req.method === 'POST' && job[2] === 'cancel') { send(res, 200, knowledge.cancel(job[1])); return; }
             if (req.method === 'POST' && job[2] === 'discard') { send(res, 200, knowledge.discard(job[1])); return; }
