@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+  <title>页面外壳标题</title>
+  <meta name="author" content="备用作者">
+  <base href="https://mp.weixin.qq.com/articles/">
+</head>
+<body>
+  <h1 class="rich_media_title" id="activity-name">微信正文兼容性示例</h1>
+  <span id="js_author_name">示例作者</span>
+  <a id="js_name">示例公众号</a>
+  <div class="rich_media_content" id="js_content" style="visibility: hidden; opacity: 0;">
+    <h2>第一节：正文开头</h2>
+    <p>这里是需要完整保留的文章开头。微信会在脚本运行前隐藏整个正文容器，但后台采集已经收到了文本，不应只保留作者与页面按钮。</p>
+    <h2>第二节：中间内容</h2>
+    <p>这里是需要完整保留的文章中段。内容包含来源链接和图片，用于验证采集器能在不执行脚本的情况下读取真实内容。</p>
+    <p><a href="../s/reference">参考文章</a><a href="javascript:alert(1)">危险链接示例</a></p>
+    <img data-src="https://mmbiz.qpic.cn/example/640?wx_fmt=png" alt="正文配图">
+    <img src="data:image/gif;base64,R0lGODlh" data-src="../images/chart.png" alt="懒加载图表">
+    <img data-src="javascript:alert(2)" alt="无效图片">
+    <img alt="无地址图片">
+    <pre><code>const captured = true;</code></pre>
+    <pre class="code-snippet__js" data-lang="python"><code><span><span class="code-snippet__keyword">def</span> capture():</span></code><code><span>&#160;&#160;&#160;&#160;first = 1</span></code><code><span><br></span></code><code><span>&#160;&#160;&#160;&#160;return first</span></code></pre>
+    <script>throw new Error('wechat-script-must-not-run')</script>
+    <form><input value="form-secret"><button>文章内的表单按钮</button></form>
+    <h2>第三节：正文结尾</h2>
+    <p>这里是需要完整保留的文章结尾，提供参考来源与最后的结论，用于检查长文章不会只保存开头的一小段。</p>
+  </div>
+  <div><p>页面互动区域：收藏、点赞、不喜欢。</p></div>
+</body>
+</html>

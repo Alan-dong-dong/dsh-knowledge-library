@@ -10,6 +10,7 @@ import { parseSubtitles } from '../src/core/extract.js';
 
 const article = '<html><head><title>混合检索实践</title></head><body><article><h1>混合检索实践</h1><p>混合检索将关键词检索和语义检索结合，在查询包含专有名词、产品型号、技术术语时保留精确匹配。</p><p>召回之后可以使用重排模型，把更符合用户意图的结果放在前面，最终保留每条结论的原文出处。</p><script>window.injected=true</script></article></body></html>';
 const verification = readFileSync(new URL('./fixtures/wechat-verification.html', import.meta.url), 'utf8');
+const wechatArticle = readFileSync(new URL('./fixtures/wechat-article.html', import.meta.url), 'utf8');
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'dsh-library-test-'));
   const library = new Library(root);
@@ -51,6 +52,28 @@ test('web article preserves source and raw HTML without executing scripts', () =
     assert.doesNotMatch(saved.material.content, /window.injected/);
     assert.match(f.library.original(saved.material.id).bytes.toString(), /window.injected/);
     assert.ok(saved.material.segments.length > 0);
+  } finally { f.cleanup(); }
+});
+
+test('Wechat collection and saved HTML import persist article body, provenance and extraction metadata', () => {
+  const f = fixture();
+  try {
+    const source = 'https://mp.weixin.qq.com/s/example';
+    const saved = f.library.captureHtml(wechatArticle, source).material;
+    assert.equal(saved.title, '微信正文兼容性示例');
+    assert.equal(saved.author, '示例作者');
+    assert.equal(saved.sourceUrl, source);
+    assert.match(saved.extraction, /微信正文容器提取/);
+    assert.match(saved.content, /正文结尾/);
+    assert.match(saved.content, /https:\/\/mmbiz\.qpic\.cn/);
+    assert.match(f.library.exportMarkdown(saved.id), /微信正文兼容性示例/);
+    assert.equal(f.library.original(saved.id).bytes.toString(), wechatArticle);
+    assert.ok(saved.segments.some(segment => segment.text.includes('正文结尾')));
+    const imported = f.library.importBytes('wechat.html', Buffer.from(wechatArticle.replace('正文结尾', '导入结尾'))).material;
+    assert.equal(imported.author, '示例作者');
+    assert.match(imported.extraction, /本地 HTML：微信正文容器提取/);
+    assert.match(imported.content, /导入结尾/);
+    assert.doesNotMatch(imported.content, /页面互动区域/);
   } finally { f.cleanup(); }
 });
 

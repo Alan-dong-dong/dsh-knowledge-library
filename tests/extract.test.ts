@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { PageAccessError } from '../src/core/page-access.js';
 
 const verification = readFileSync(new URL('./fixtures/wechat-verification.html', import.meta.url), 'utf8');
+const wechatArticle = readFileSync(new URL('./fixtures/wechat-article.html', import.meta.url), 'utf8');
 
 test('inert article parser preserves metadata, base-relative links and HTML fragments', () => {
   const paragraph = 'This article contains enough source content to remain available for later reading, extraction, citation and analysis.';
@@ -34,4 +35,28 @@ test('normal articles about environment errors and verification retain their rea
   assert.match(article.content, /保留原始资料来源/);
   const generic = extractArticle(`<html><head><title>Cloudflare challenge guide</title></head><body><article><p>${paragraph.repeat(5)}</p><form id="challenge-form">Example form</form></article></body></html>`, 'https://example.com/guide');
   assert.match(generic.content, /保留原始资料来源/);
+});
+
+test('Wechat hidden article body, lazy images and metadata are preserved without page chrome or script execution', () => {
+  for (const url of ['https://mp.weixin.qq.com/s/example', 'https://mp.weixin.qq.com./s/example', 'https://import.invalid/']) {
+    const article = extractArticle(wechatArticle, url);
+    assert.equal(article.title, '微信正文兼容性示例');
+    assert.equal(article.author, '示例作者');
+    for (const section of ['正文开头', '中间内容', '正文结尾']) assert.ok(article.content.includes(section), section);
+    assert.match(article.content, /https:\/\/mp\.weixin\.qq\.com\/s\/reference/);
+    assert.match(article.content, /!\[正文配图\]\(https:\/\/mmbiz\.qpic\.cn\/example\/640\?wx_fmt=png\)/);
+    assert.match(article.content, /!\[懒加载图表\]\(https:\/\/mp\.weixin\.qq\.com\/images\/chart\.png\)/);
+    assert.match(article.content, /```[\s\S]*const captured = true;[\s\S]*```/);
+    assert.ok(article.content.includes('```python\ndef capture():\n    first = 1\n\n    return first\n```'));
+    assert.doesNotMatch(article.content, /页面互动区域|不喜欢|wechat-script-must-not-run|form-secret|表单按钮|javascript:|data:image|无效图片|无地址图片/);
+  }
+  const accountAuthor = extractArticle(wechatArticle.replace('id="js_author_name"', 'id="other-author"'), 'https://mp.weixin.qq.com/s/example');
+  assert.equal(accountAuthor.author, '示例公众号');
+});
+
+test('Wechat container rules do not replace normal extraction on unrelated sites or pages without that body', () => {
+  const generic = extractArticle(wechatArticle.replace('visibility: hidden; opacity: 0;', ''), 'https://example.com/article');
+  assert.equal(generic.author, '备用作者');
+  const ordinary = extractArticle('<html><head><title>普通页面</title></head><body><article><p>这里是没有微信专用正文容器的普通文章内容，仍应使用通用正文提取器正常提取、保留原有处理方式。</p></article></body></html>', 'https://mp.weixin.qq.com/other');
+  assert.match(ordinary.content, /使用通用正文提取器/);
 });

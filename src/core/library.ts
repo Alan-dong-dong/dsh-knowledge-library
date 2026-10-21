@@ -182,7 +182,7 @@ export class Library {
     const source = validateUrl(url).href;
     const article = extractArticle(html, source);
     return this.save(article.content, { ...fields, title: fields.title || article.title, sourceUrl: source }, {
-      kind: 'web', author: article.author, extraction: 'Readability 正文提取；图片保留远程引用，未离线下载',
+      kind: 'web', author: article.author, extraction: `${article.extraction}；图片保留远程引用，未离线下载`,
     }, { name: 'page.html', bytes: Buffer.from(html) });
   }
   importFile(path: string, fields: CaptureFields = {}): CaptureResult {
@@ -203,7 +203,7 @@ export class Library {
     }
     if (['.html', '.htm'].includes(extension)) {
       const article = extractArticle(this.decode(bytes), fields.sourceUrl || 'https://import.invalid/');
-      return this.save(article.content, { ...data, title: fields.title || article.title }, { kind: 'file', extraction: '本地 HTML 正文提取', author: article.author }, original);
+      return this.save(article.content, { ...data, title: fields.title || article.title }, { kind: 'file', extraction: `本地 HTML：${article.extraction}；图片保留远程引用，未离线下载`, author: article.author }, original);
     }
     if (['.txt', '.md', '.markdown', '.csv', '.json', '.log'].includes(extension)) {
       return this.save(this.decode(bytes), data, { kind: 'file', extraction: 'UTF-8 文本导入' }, original);

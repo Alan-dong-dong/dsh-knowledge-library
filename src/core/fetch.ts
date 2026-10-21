@@ -58,7 +58,7 @@ export async function fetchPublicPage(input: string, signal?: AbortSignal, polic
     const response = await new Promise<{ status: number; location?: string; contentType: string; bytes: Buffer }>((resolve, reject) => {
       const req = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
         method: 'GET', signal: combined, family: address.family,
-        headers: { 'User-Agent': 'DSH-Knowledge-Library/0.1', Accept: 'text/html,text/plain;q=0.8', 'Accept-Encoding': 'identity' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DSH-Knowledge-Library/0.1)', Accept: 'text/html,application/xhtml+xml,text/plain;q=0.8', 'Accept-Encoding': 'identity' },
         // Pin the validated DNS result so a second resolution cannot reach an internal host.
         lookup: (_host, _options, callback) => callback(null, address.address, address.family),
       }, res => {

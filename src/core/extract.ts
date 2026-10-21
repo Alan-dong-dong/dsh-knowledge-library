@@ -18,6 +18,46 @@ function parseDocument(html: string, url: string): Document {
   return document as unknown as Document;
 }
 
+function extractWechatArticle(document: Document, url: string) {
+  const host = new URL(url).hostname.toLowerCase().replace(/\.$/, '');
+  const body = document.querySelector('#js_content');
+  // Saved WeChat HTML has no HTTP source when imported as a local file.
+  const savedWechat = host === 'import.invalid' && body?.classList.contains('rich_media_content')
+    && document.querySelector('#activity-name.rich_media_title');
+  if (host !== 'mp.weixin.qq.com' && !savedWechat) return null;
+  if (!body || (body.textContent?.trim().length ?? 0) < 40) return null;
+  // WeChat hides the entire body until its scripts run. Read the explicit article
+  // container without running those scripts or discarding it as invisible text.
+  return {
+    title: document.querySelector('#activity-name')?.textContent?.trim()
+      || document.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()
+      || document.title,
+    byline: document.querySelector('#js_author_name')?.textContent?.trim()
+      || document.querySelector('#js_name')?.textContent?.trim()
+      || document.querySelector('meta[name="author"]')?.getAttribute('content')?.trim(),
+    content: body.innerHTML,
+    textContent: body.textContent,
+  };
+}
+
+function normalizeWechatCode(document: Document): void {
+  for (const pre of Array.from(document.querySelectorAll('pre'))) {
+    const lines = Array.from(pre.children).filter(node => node.localName === 'code');
+    if (!lines.length || lines.length !== pre.children.length) continue;
+    // WeChat uses one sibling <code> element per line; Turndown's standard
+    // fenced-code rule only reads the first <code>. Merge before conversion.
+    const code = document.createElement('code');
+    code.className = lines[0].className;
+    code.textContent = lines.map(line => {
+      for (const br of Array.from(line.querySelectorAll('br'))) br.replaceWith('\n');
+      return (line.textContent || '').replace(/\u00a0/g, ' ').replace(/\n$/, '');
+    }).join('\n');
+    const language = pre.getAttribute('data-lang');
+    if (language && /^[\w+-]+$/.test(language)) code.className = `language-${language}`;
+    pre.replaceChildren(code);
+  }
+}
+
 export function extractArticle(html: string, url: string) {
   // Linkedom parses inert DOM only: no script execution, windows, or resource loading.
   // It also avoids the punycode/ dependency that DSH 0.2.1-rc.2 misroutes in packed profiles.
@@ -25,14 +65,17 @@ export function extractArticle(html: string, url: string) {
   for (const node of Array.from(document.querySelectorAll('script,style,iframe'))) node.remove();
   assertArticleAccess(document, url);
   for (const node of Array.from(document.querySelectorAll('form'))) node.remove();
-  const article = new Readability(document).parse();
+  const wechat = extractWechatArticle(document, url);
+  const article = wechat || new Readability(document).parse();
   if (!article?.content || (article.textContent?.trim().length ?? 0) < 40) {
     throw new Error('未提取到有效正文。该网页可能需要登录或动态渲染，请复制正文或导入保存的 HTML。');
   }
-  const clean = parseDocument(`<!doctype html><html><head></head><body>${article.content}</body></html>`, url);
+  const baseUrl = wechat ? document.baseURI : url;
+  const clean = parseDocument(`<!doctype html><html><head></head><body>${article.content}</body></html>`, baseUrl);
+  if (wechat) normalizeWechatCode(clean);
   for (const anchor of Array.from(clean.querySelectorAll('a'))) {
     try {
-      const href = new URL(anchor.getAttribute('href') ?? '', url);
+      const href = new URL(anchor.getAttribute('href') ?? '', baseUrl);
       if (['http:', 'https:'].includes(href.protocol)) anchor.setAttribute('href', href.href);
       else anchor.removeAttribute('href');
     } catch { anchor.removeAttribute('href'); }
@@ -40,7 +83,9 @@ export function extractArticle(html: string, url: string) {
   // Preserve image references; do not silently fetch third-party resources.
   for (const image of Array.from(clean.querySelectorAll('img'))) {
     try {
-      const src = new URL(image.getAttribute('src') ?? '', url);
+      const value = (wechat && image.getAttribute('data-src')) || image.getAttribute('src');
+      if (!value?.trim()) { image.remove(); continue; }
+      const src = new URL(value, baseUrl);
       if (['http:', 'https:'].includes(src.protocol)) image.setAttribute('src', src.href);
       else image.remove();
     } catch { image.remove(); }
@@ -48,6 +93,7 @@ export function extractArticle(html: string, url: string) {
   return {
     title: article.title?.trim() || new URL(url).hostname,
     author: article.byline || undefined,
+    extraction: wechat ? '微信正文容器提取' : 'Readability 正文提取',
     content: markdown.turndown(clean.body.innerHTML).trim(),
   };
 }
