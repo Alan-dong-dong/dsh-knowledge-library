@@ -9,6 +9,7 @@ import { isPublicAddress, fetchPublicPage, permittedAddress } from '../src/core/
 import { parseSubtitles } from '../src/core/extract.js';
 
 const article = '<html><head><title>混合检索实践</title></head><body><article><h1>混合检索实践</h1><p>混合检索将关键词检索和语义检索结合，在查询包含专有名词、产品型号、技术术语时保留精确匹配。</p><p>召回之后可以使用重排模型，把更符合用户意图的结果放在前面，最终保留每条结论的原文出处。</p><script>window.injected=true</script></article></body></html>';
+const verification = readFileSync(new URL('./fixtures/wechat-verification.html', import.meta.url), 'utf8');
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'dsh-library-test-'));
   const library = new Library(root);
@@ -51,6 +52,38 @@ test('web article preserves source and raw HTML without executing scripts', () =
     assert.match(f.library.original(saved.material.id).bytes.toString(), /window.injected/);
     assert.ok(saved.material.segments.length > 0);
   } finally { f.cleanup(); }
+});
+
+test('verification pages never become materials; the failure persists and retry can later save the real article', async () => {
+  const f = fixture();
+  let queue: ImportQueue | undefined;
+  let verified = false;
+  const source = 'https://mp.weixin.qq.com/s/test-article';
+  const fetchPage = async () => ({ html: verified ? article : verification, url: source });
+  try {
+    assert.throws(() => f.library.captureHtml(verification, source, { title: 'User supplied title' }), /验证页面/);
+    assert.throws(() => f.library.importBytes('saved-page.html', Buffer.from(verification)), /验证页面/);
+    assert.equal(f.library.stats().total, 0);
+    queue = new ImportQueue(f.library, fetchPage);
+    const job = queue.add(source);
+    await queue.idle();
+    assert.equal(queue.list()[0].status, 'failed');
+    assert.equal(queue.list()[0].errorCode, 'PAGE_REQUIRES_BROWSER');
+    assert.equal(queue.list()[0].materialId, undefined);
+    assert.equal(f.library.stats().total, 0);
+    await queue.close();
+    queue = new ImportQueue(f.library, fetchPage);
+    assert.equal(queue.list()[0].errorCode, 'PAGE_REQUIRES_BROWSER');
+    verified = true;
+    queue.retry(job.id);
+    assert.equal(queue.list()[0].errorCode, undefined);
+    await queue.idle();
+    assert.equal(queue.list()[0].status, 'completed');
+    assert.equal(queue.list()[0].error, undefined);
+    assert.equal(queue.list()[0].errorCode, undefined);
+    assert.equal(f.library.stats().total, 1);
+    assert.match(f.library.get(queue.list()[0].materialId!).content, /混合检索/);
+  } finally { await queue?.close(); f.cleanup(); }
 });
 
 test('subtitle timestamps and note citations roundtrip; missing citations fail', () => {

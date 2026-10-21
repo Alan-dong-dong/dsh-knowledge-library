@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Library } from '../src/core/library.js';
@@ -27,6 +27,12 @@ test('HTTP UI API persists captures, validates notes, updates metadata and rejec
     assert.equal(note.status, 201);
     assert.equal((await request('/notes', { content: '坏引用', citations: [{ materialId: saved.material.id, segmentId: 'missing' }] })).status, 400);
     assert.equal((await request('/upload', { name: 'a.srt', base64: Buffer.from('1\n00:00:01,000 --> 00:00:03,000\n字幕内容\n').toString('base64') })).status, 201);
+    const before = library.stats().total;
+    const blockedHtml = readFileSync(new URL('./fixtures/wechat-verification.html', import.meta.url));
+    const blockedImport = await request('/upload', { name: 'saved-page.html', base64: blockedHtml.toString('base64') });
+    assert.equal(blockedImport.status, 400);
+    assert.match((await blockedImport.json() as any).error, /验证页面/);
+    assert.equal(library.stats().total, before);
     assert.equal((await fetch(origin + API_PATH + '/capture', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
     assert.equal((await fetch(origin + API_PATH + '/stats', { headers: { Origin: 'https://attacker.example' } })).status, 403);
     // Node fetch normalizes Host; raw HTTP independently exercises the rebinding fence.

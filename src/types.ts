@@ -67,4 +67,5 @@ export interface ImportJob {
   attempts: number;
   materialId?: string;
   error?: string;
+  errorCode?: 'PAGE_REQUIRES_BROWSER';
 }

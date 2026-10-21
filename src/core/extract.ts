@@ -2,6 +2,7 @@ import { parseHTML } from 'linkedom';
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import type { Segment } from '../types.js';
+import { assertArticleAccess } from './page-access.js';
 
 const markdown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 markdown.remove(['script', 'style', 'iframe', 'form', 'input', 'button']);
@@ -21,7 +22,9 @@ export function extractArticle(html: string, url: string) {
   // Linkedom parses inert DOM only: no script execution, windows, or resource loading.
   // It also avoids the punycode/ dependency that DSH 0.2.1-rc.2 misroutes in packed profiles.
   const document = parseDocument(html, url);
-  for (const node of Array.from(document.querySelectorAll('script,style,iframe,form'))) node.remove();
+  for (const node of Array.from(document.querySelectorAll('script,style,iframe'))) node.remove();
+  assertArticleAccess(document, url);
+  for (const node of Array.from(document.querySelectorAll('form'))) node.remove();
   const article = new Readability(document).parse();
   if (!article?.content || (article.textContent?.trim().length ?? 0) < 40) {
     throw new Error('未提取到有效正文。该网页可能需要登录或动态渲染，请复制正文或导入保存的 HTML。');

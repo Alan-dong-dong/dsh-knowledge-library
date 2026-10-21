@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { CaptureFields, ImportJob } from '../types.js';
 import { atomicJson, Library } from './library.js';
 import { fetchPublicPage, validateUrl } from './fetch.js';
+import { PageAccessError } from './page-access.js';
 
 export class ImportQueue {
   private jobs: ImportJob[];
@@ -37,7 +38,7 @@ export class ImportQueue {
   retry(id: string) {
     const job = this.jobs.find(j => j.id === id);
     if (!job || job.status !== 'failed') throw new Error('只能重试失败的任务');
-    job.status = 'queued'; job.error = undefined; job.attempts = 0;
+    job.status = 'queued'; job.error = undefined; job.errorCode = undefined; job.attempts = 0;
     this.persist(); this.kick(); return structuredClone(job);
   }
   private persist() { atomicJson(this.file, this.jobs); }
@@ -53,10 +54,11 @@ export class ImportQueue {
           const page = await this.fetchPage(job.url, this.abort.signal);
           if (this.stopped) break;
           const result = this.library.captureHtml(page.html, page.url, job.fields);
-          job.materialId = result.material.id; job.status = 'completed'; job.error = undefined;
+          job.materialId = result.material.id; job.status = 'completed'; job.error = undefined; job.errorCode = undefined;
         } catch (error) {
           job.status = this.stopped ? 'queued' : 'failed';
           job.error = (error as Error).message;
+          job.errorCode = error instanceof PageAccessError ? error.code : undefined;
         }
         job.updatedAt = new Date().toISOString(); this.persist();
       }

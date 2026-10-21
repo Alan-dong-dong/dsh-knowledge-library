@@ -10,7 +10,7 @@ const kinds: Record<MaterialKind, { label: string; icon: string }> = {
 };
 type Stats = { total: number; ready: number; notes: number; inbox: number; root: string; warnings: string[]; categories: Array<{ name: string; count: number }>; collections: Array<{ name: string; count: number }>; tags: Array<{ name: string; count: number }> };
 type Filter = { category?: string; collection?: string; kind?: string; tag?: string };
-type Editor = { mode: 'capture' | 'note' | 'edit'; source?: MaterialDetail; segment?: Segment };
+type Editor = { mode: 'capture' | 'note' | 'edit'; source?: MaterialDetail; segment?: Segment; initialType?: 'text'; sourceUrl?: string };
 const time = (v: number) => `${String(Math.floor(v / 3600)).padStart(2, '0')}:${String(Math.floor(v / 60) % 60).padStart(2, '0')}:${String(Math.floor(v) % 60).padStart(2, '0')}`;
 const date = (value: string) => new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(value));
 async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
@@ -170,7 +170,19 @@ export function App() {
       else { setShowJobs(true); notify('网页已加入采集队列'); }
     }} />}
     {showJobs && <Dialog title="采集任务" description="网页在后台提取正文。关闭应用后，下次启动会恢复未完成任务。" onClose={() => setShowJobs(false)}>
-      <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}><div><span className={`kl-job-status ${job.status}`}>{({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div><strong>{job.url}</strong>{job.error && <p role={job.status === 'failed' ? 'alert' : undefined}>{job.error}</p>}<div>{job.materialId && <button onClick={() => { setSelected(job.materialId); setShowJobs(false); refresh(); }}>查看资料 <Icon name="arrow" size={14} /></button>}{job.status === 'failed' && <>{/fake-ip/i.test(job.error || '') && <button onClick={() => { setShowJobs(false); setSettingsFromJobs(true); setShowInfo(true); }}>代理兼容设置</button>}<button onClick={() => void post(`/jobs/${job.id}/retry`, {}).then(refresh).catch(e => setError(e.message))}>重新采集</button></>}</div></div>)}</div>
+      <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}>
+        <div><span className={`kl-job-status ${job.status}`}>{job.status === 'failed' && job.errorCode === 'PAGE_REQUIRES_BROWSER' ? '需浏览器验证' : ({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div>
+        <strong>{job.url}</strong>{job.error && <p role={job.status === 'failed' ? 'alert' : undefined}>{job.error}</p>}
+        <div className="kl-job-actions">
+          {job.materialId && <button onClick={() => { setSelected(job.materialId); setShowJobs(false); refresh(); }}>查看资料 <Icon name="arrow" size={14} /></button>}
+          {job.status === 'failed' && <>
+            {/^https?:\/\//i.test(job.url) && <a href={job.url} target="_blank" rel="noopener noreferrer">打开原网页<Icon name="arrow" size={14} /></a>}
+            <button onClick={() => { setShowJobs(false); setEditor({ mode: 'capture', initialType: 'text', sourceUrl: job.url }); }}>粘贴正文</button>
+            {/fake-ip/i.test(job.error || '') && <button onClick={() => { setShowJobs(false); setSettingsFromJobs(true); setShowInfo(true); }}>代理兼容设置</button>}
+            <button onClick={() => void post(`/jobs/${job.id}/retry`, {}).then(refresh).catch(e => setError(e.message))}>重新采集</button>
+          </>}
+        </div>
+      </div>)}</div>
     </Dialog>}
     {showInfo && <SettingsDialog root={stats?.root || ''} warnings={stats?.warnings || []} onClose={() => { setShowInfo(false); if (settingsFromJobs) setShowJobs(true); setSettingsFromJobs(false); }} onChanged={() => {
       setSelected(undefined); setDetail(undefined); setAnchor(undefined); setItems([]); setQuery(''); chooseFilter({}); refresh(); notify('资料库目录已切换');
@@ -271,7 +283,8 @@ function EditorDialog({ editor, categories, onClose, onSaved }: { editor: Editor
   const editing = editor.mode === 'edit';
   const note = editor.mode === 'note';
   const source = editor.source;
-  const [type, setType] = useState<'text' | 'url' | 'file'>('url');
+  const [type, setType] = useState<'text' | 'url' | 'file'>(editor.initialType || 'url');
+  const [sourceUrl, setSourceUrl] = useState(editor.sourceUrl || '');
   const [title, setTitle] = useState(editing ? source?.title || '' : note && source ? `${source.title} · 摘录` : '');
   const [content, setContent] = useState(editor.segment ? `> ${editor.segment.text}\n\n` : '');
   const [category, setCategory] = useState(editing ? source?.category || '收件箱' : note ? '知识笔记' : '收件箱');
@@ -286,6 +299,7 @@ function EditorDialog({ editor, categories, onClose, onSaved }: { editor: Editor
     event.preventDefault(); setError(''); setBusy(true);
     try {
       const data: CaptureFields = { title, category, tags: splitTags(tags), collection, sourceNote };
+      if (!editing && !note && type === 'text' && sourceUrl.trim()) data.sourceUrl = sourceUrl.trim();
       let result;
       if (editing) result = await post(`/materials/${source!.id}`, data, 'PATCH');
       else if (note) result = await post('/notes', { ...data, content, citations });
@@ -312,6 +326,7 @@ function EditorDialog({ editor, categories, onClose, onSaved }: { editor: Editor
       {!editing && !note && type === 'file' && <label className="kl-upload"><Icon name="upload" size={27} /><strong>{file?.name || '选择或拖入文件'}</strong><span>文本、HTML、SRT / VTT 字幕及其他文件 · 最大 64 MB</span><input aria-label="选择本地文件" type="file" onChange={e => setFile(e.target.files?.[0])} /><small>视频和 PDF 可归档，当前版本不会自动转写或 OCR。</small></label>}
       <label>标题{!editing && !note && <em>可选</em>}<input required={editing || note} value={title} onChange={e => setTitle(e.target.value)} placeholder={type === 'url' && !note ? '自动提取网页标题，也可以自己填写' : '给这份内容起个名字'} maxLength={300} /></label>
       {!editing && (note || type === 'text') && <label>{note ? '笔记内容' : '正文'}<textarea required rows={7} value={content} onChange={e => setContent(e.target.value)} placeholder={note ? '记录你的理解、结论与尚待验证的问题…' : '粘贴想保留的文字，支持 Markdown…'} /></label>}
+      {!editing && !note && type === 'text' && <label>来源网页<em>可选</em><input type="url" aria-label="来源网页" placeholder="https://…" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} /><small>保留原网页地址，方便回溯来源。</small></label>}
       {!!citations.length && <div className="kl-citation-preview"><Icon name="file" size={16} /><span>引用：{source!.title}{editor.segment ? ` / ${editor.segment.id}` : ''}</span></div>}
       <div className="kl-form-grid"><label>分类<input list="kl-categories" value={category} onChange={e => setCategory(e.target.value)} placeholder="例如 技术/AI" /><datalist id="kl-categories">{categories.map(c => <option value={c} key={c} />)}</datalist></label><label>专题<em>可选</em><input value={collection} onChange={e => setCollection(e.target.value)} placeholder="围绕一个问题组织资料" /></label></div>
       <label>标签<em>可选</em><input value={tags} onChange={e => setTags(e.target.value)} placeholder="用逗号分隔，例如：待读，RAG，实践" /></label>

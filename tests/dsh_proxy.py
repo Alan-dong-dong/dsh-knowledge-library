@@ -79,9 +79,39 @@ with sync_playwright() as p:
         expect(dialog.get_by_role('checkbox')).to_be_visible()
         assert dialog.evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
         page.screenshot(path=str(out / 'proxy-settings-mobile.png'), animations='disabled')
+        page.get_by_role('button', name='关闭弹窗', exact=True).click()
+        page.set_viewport_size({'width': 1440, 'height': 1000})
+        page.emulate_media(color_scheme='light')
+        # Show a classified verification failure, then use real capture APIs for recovery.
+        source = 'https://mp.weixin.qq.com/s/test-article'
+        job.update(id='job_verification_fixture', url=source, errorCode='PAGE_REQUIRES_BROWSER', error='微信返回了验证页面，尚未获取文章正文。请在浏览器打开原网页，完成验证后粘贴正文，或导入保存的 HTML。后台采集不共享浏览器的验证状态。')
+        page.reload()
+        page.get_by_role('button', name='资料库', exact=True).click()
+        page.get_by_role('button', name='采集任务', exact=True).click()
+        dialog = page.get_by_role('dialog', name='采集任务', exact=True)
+        expect(dialog.get_by_text('需浏览器验证', exact=True)).to_be_visible()
+        expect(dialog.get_by_role('link', name='打开原网页', exact=True)).to_have_attribute('href', source)
+        expect(dialog.get_by_role('link', name='打开原网页', exact=True)).to_have_attribute('rel', 'noopener noreferrer')
+        page.screenshot(path=str(out / 'verification-task.png'), animations='disabled')
+        page.set_viewport_size({'width': 390, 'height': 844})
+        assert dialog.evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
+        page.screenshot(path=str(out / 'verification-task-mobile.png'), animations='disabled')
+        dialog.get_by_role('button', name='粘贴正文', exact=True).click()
+        dialog = page.get_by_role('dialog', name='收集一份资料', exact=True)
+        expect(dialog.get_by_role('tab', name='文本摘录', exact=True)).to_have_attribute('aria-selected', 'true')
+        expect(dialog.get_by_label('来源网页', exact=True)).to_have_value(source)
+        dialog.get_by_label('标题').fill('微信正文人工导入验证')
+        dialog.get_by_label('正文', exact=True).fill('这是在浏览器完成验证后，由用户明确粘贴保存的实际文章正文。保存时保留原网页链接，后续可以按来源回溯、检索和引用，不将环境异常页面当成文章。')
+        dialog.get_by_role('button', name='保存资料', exact=True).click()
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        expect(page.get_by_role('region', name='资料详情').get_by_role('heading', name='微信正文人工导入验证', exact=True)).to_be_visible()
+        material = page.request.get(api + '/materials?query=微信正文人工导入验证').json()['items'][0]
+        assert material['sourceUrl'] == source
+        assert material['kind'] == 'text'
+        page.screenshot(path=str(out / 'verification-manual.png'), animations='disabled')
         assert not errors, errors
-        (out / 'proxy-result.json').write_text(json.dumps({'passed': True, 'errors': errors, 'jobPresentation': 'fixture', 'settingsPersistence': 'real Harness API', 'verified': ['off by default', 'cancel does not save', 'error entry and return to retry', 'enable and disable persistence', 'failed save preserves old mode', 'root preserved', 'type and same-origin validation', 'dark and mobile settings']}, ensure_ascii=False, indent=2), encoding='utf-8')
-        print('PASS: proxy settings, opt-in, job recovery entry, persistence and failure handling.')
+        (out / 'proxy-result.json').write_text(json.dumps({'passed': True, 'errors': errors, 'jobPresentation': 'fixture', 'settingsAndManualCapture': 'real Harness API', 'verified': ['off by default', 'cancel does not save', 'error entry and return to retry', 'enable and disable persistence', 'failed save preserves old mode', 'root preserved', 'type and same-origin validation', 'dark and mobile settings', 'verification page recovery actions', 'manual text capture retains source URL']}, ensure_ascii=False, indent=2), encoding='utf-8')
+        print('PASS: proxy settings, verification recovery actions and manual capture with source URL.')
     finally:
         page.screenshot(path=str(out / 'proxy-last.png'), animations='disabled')
         browser.close()
