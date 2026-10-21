@@ -2,7 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, unlinkSync, openSync, closeSync } from 'node:fs';
 import { resolve, join, dirname, basename, extname, relative, isAbsolute } from 'node:path';
-import type { CaptureFields, CaptureResult, Citation, Material, MaterialDetail, SearchOptions, SearchResult, Segment } from '../types.js';
+import type { CaptureFields, CaptureResult, Citation, EmptyTrashResult, Material, MaterialDetail, SearchOptions, SearchResult, Segment, TrashSnapshot } from '../types.js';
+import { PurgeStore } from './purge.js';
 import { extractArticle, formatTime, parseSubtitles, splitSegments } from './extract.js';
 import { validateUrl } from './fetch.js';
 
@@ -52,6 +53,7 @@ export class Library {
         CREATE TABLE IF NOT EXISTS materials (id TEXT PRIMARY KEY, path TEXT NOT NULL, meta TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE VIRTUAL TABLE IF NOT EXISTS material_fts USING fts5(id UNINDEXED, title, content, tokenize='trigram');`);
       this.rebuild();
+      this.warnings.push(...this.cleanupPendingPurge().map(error => `待清理文件：${error}`));
     } catch (error) {
       try { this.db!.close(); } catch {}
       unlinkSync(this.lockPath); throw error;
@@ -123,6 +125,7 @@ export class Library {
     const row = this.row(id);
     return { ...JSON.parse(row.meta), content: row.content, segments: JSON.parse(readFileSync(join(row.path, 'segments.json'), 'utf8')), path: row.path };
   }
+  has(id: string): boolean { return Boolean(this.db.prepare('SELECT id FROM materials WHERE id=?').get(id)); }
   original(id: string): { bytes: Buffer; name: string } {
     const item = this.get(id);
     if (!item.originalFile || basename(item.originalFile) !== item.originalFile) throw new Error('该资料没有原始附件');
@@ -246,8 +249,8 @@ export class Library {
     if (Boolean(item.deletedAt) === deleted) return item;
     const { content, segments: _segments, path, ...previous } = item;
     const meta = { ...previous, updatedAt: now() };
-    if (deleted) meta.deletedAt = now();
-    else delete meta.deletedAt;
+    if (deleted) { meta.deletedAt = now(); meta.deletionId = randomUUID(); }
+    else { delete meta.deletedAt; delete meta.deletionId; }
     // Keep the canonical files and stable IDs in place so existing citations
     // remain readable. The flag also survives rebuilding a lost SQLite index.
     this.db.exec('BEGIN IMMEDIATE');
@@ -262,6 +265,59 @@ export class Library {
       throw error;
     }
     return this.get(id);
+  }
+  private trashPlan() {
+    const rows = this.db.prepare('SELECT id,path,meta FROM materials ORDER BY id').all() as Array<{ id: string; path: string; meta: string }>;
+    const items = rows.map(row => ({ ...row, metadata: JSON.parse(row.meta) as Material })).filter(row => row.metadata.deletedAt);
+    const pending = new PurgeStore(this.root).list();
+    const token = hash(JSON.stringify({ items: items.map(row => [row.id, row.metadata.deletedAt, row.metadata.deletionId]), pending: pending.map(row => row.id) }));
+    return { items, pending, token };
+  }
+  trashSnapshot(): TrashSnapshot {
+    const plan = this.trashPlan(); return { count: plan.items.length, pending: plan.pending.length, token: plan.token };
+  }
+  private cleanupPendingPurge(): string[] {
+    const store = new PurgeStore(this.root);
+    const errors: string[] = [];
+    try {
+      for (const ticket of store.list()) {
+        try { store.finish(ticket); }
+        catch (error) { errors.push(`${ticket.id}：${(error as Error).message}`); }
+      }
+    } catch (error) { errors.push((error as Error).message); }
+    return errors;
+  }
+  emptyTrash(expectedToken: string): EmptyTrashResult {
+    const plan = this.trashPlan();
+    if (typeof expectedToken !== 'string' || expectedToken !== plan.token) throw new Error('回收站内容已改变，请重新打开清空确认窗口');
+    const store = new PurgeStore(this.root);
+    // Preflight the entire confirmed scope before moving or removing anything.
+    for (const item of plan.items) {
+      const expected = join(this.root, 'materials', ...categoryName(item.metadata.category).split('/'), item.id);
+      if (resolve(item.path) !== resolve(expected)) throw new Error('清理目标与资料目录不一致');
+      store.validate(item.id, item.path);
+    }
+    const errors = this.cleanupPendingPurge();
+    let deleted = 0;
+    for (const item of plan.items) {
+      try {
+        const ticket = store.stage(item.id, item.path);
+        let transaction = false;
+        try {
+          this.db.exec('BEGIN IMMEDIATE'); transaction = true;
+          this.db.prepare('DELETE FROM material_fts WHERE id=?').run(item.id);
+          this.db.prepare('DELETE FROM materials WHERE id=?').run(item.id);
+          this.db.exec('COMMIT'); transaction = false;
+        } catch (error) {
+          if (transaction) this.db.exec('ROLLBACK');
+          store.rollback(ticket); throw error;
+        }
+        deleted++;
+        try { store.finish(ticket); }
+        catch (error) { errors.push(`${item.id}：文件清理未完成，${(error as Error).message}`); }
+      } catch (error) { errors.push(`${item.id}：${(error as Error).message}`); }
+    }
+    return { deleted, pending: store.list().length, errors };
   }
   saveNote(content: string, citations: Citation[], fields: CaptureFields): CaptureResult {
     if (!content?.trim()) throw new Error('笔记内容不能为空');
@@ -316,7 +372,9 @@ export class Library {
       for (const m of materials) for (const key of select(m)) if (key) map.set(key, (map.get(key) || 0) + 1);
       return [...map].sort((a, b) => a[0].localeCompare(b[0], 'zh')).map(([name, count]) => ({ name, count }));
     };
-    return { total: materials.length, trashed: all.length - materials.length, ready: materials.filter(m => m.status === 'ready').length, notes: materials.filter(m => m.kind === 'note').length,
+    let purgePending = 0;
+    try { purgePending = new PurgeStore(this.root).list().length; } catch { /* Clearing reports invalid cleanup records without breaking normal reading. */ }
+    return { total: materials.length, trashed: all.length - materials.length, canEmptyTrash: true, purgePending, ready: materials.filter(m => m.status === 'ready').length, notes: materials.filter(m => m.kind === 'note').length,
       inbox: materials.filter(m => m.category === '收件箱').length, categories: count(m => [m.category]),
       tags: count(m => m.tags), collections: count(m => [m.collection]), root: this.root, warnings: [...this.warnings] };
   }
@@ -324,6 +382,7 @@ export class Library {
     const item = this.get(id);
     const header = JSON.stringify({ id: item.id, title: item.title, category: item.category, tags: item.tags, collection: item.collection, sourceUrl: item.sourceUrl, createdAt: item.createdAt, revision: item.revision }, null, 2);
     const references = item.citations.map(c => {
+      if (!this.has(c.materialId)) return `- 来源已永久删除 — library://${c.materialId}${c.segmentId ? `/${c.segmentId}` : ''}`;
       const source = this.get(c.materialId);
       const segment = c.segmentId ? source.segments.find(p => p.id === c.segmentId) : undefined;
       return `- ${source.title} — library://${source.id}${c.segmentId ? `/${c.segmentId}` : ''}${segment?.startSeconds !== undefined ? ` (${formatTime(segment.startSeconds)})` : ''}${source.sourceUrl ? ` — ${source.sourceUrl}` : ''}`;

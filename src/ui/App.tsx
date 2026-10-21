@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { CaptureFields, Citation, ImportJob, MaterialDetail, MaterialKind, SearchResult, Segment } from '../types.js';
+import type { CaptureFields, Citation, EmptyTrashResult, ImportJob, MaterialDetail, MaterialKind, SearchResult, Segment, TrashSnapshot } from '../types.js';
 import { Icon } from './icons.js';
 import type { DirectoryListing } from '../directory-settings.js';
 
@@ -8,7 +8,7 @@ const kinds: Record<MaterialKind, { label: string; icon: string }> = {
   web: { label: '网页', icon: 'web' }, text: { label: '文本', icon: 'file' }, file: { label: '文件', icon: 'file' },
   video: { label: '音视频', icon: 'video' }, transcript: { label: '字幕', icon: 'video' }, note: { label: '笔记', icon: 'note' },
 };
-type Stats = { total: number; trashed: number; ready: number; notes: number; inbox: number; root: string; warnings: string[]; categories: Array<{ name: string; count: number }>; collections: Array<{ name: string; count: number }>; tags: Array<{ name: string; count: number }> };
+type Stats = { total: number; trashed: number; canEmptyTrash?: boolean; purgePending?: number; ready: number; notes: number; inbox: number; root: string; warnings: string[]; categories: Array<{ name: string; count: number }>; collections: Array<{ name: string; count: number }>; tags: Array<{ name: string; count: number }> };
 type Filter = { category?: string; collection?: string; kind?: string; tag?: string; trashed?: '1' };
 type Editor = { mode: 'capture' | 'note' | 'edit'; source?: MaterialDetail; segment?: Segment; initialType?: 'text'; sourceUrl?: string };
 const time = (v: number) => `${String(Math.floor(v / 3600)).padStart(2, '0')}:${String(Math.floor(v / 60) % 60).padStart(2, '0')}:${String(Math.floor(v) % 60).padStart(2, '0')}`;
@@ -29,11 +29,12 @@ export function App() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>({});
   const [selected, setSelected] = useState<string>();
-  const [detail, setDetail] = useState<MaterialDetail>();
+  const [detail, setDetail] = useState<MaterialDetail & { missingSources?: string[] }>();
   const [anchor, setAnchor] = useState<string>();
   const [editor, setEditor] = useState<Editor>();
   const [deletion, setDeletion] = useState<{ id: string; title: string; root: string }>();
   const [restoring, setRestoring] = useState<string>();
+  const [emptyRoot, setEmptyRoot] = useState<string>();
   const [jobs, setJobs] = useState<ImportJob[]>([]);
   const [showJobs, setShowJobs] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
@@ -137,6 +138,7 @@ export function App() {
       </div>
       {!!error && <div className="kl-error" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={() => setError('')}><Icon name="close" size={16} /></button></div>}
       <div className="kl-filterbar"><span><b>{total}</b> 份资料{query && ` · “${query}”`}</span><div><select aria-label="按类型筛选" value={filter.kind || ''} onChange={e => { setFilter({ ...filter, kind: e.target.value || undefined }); setLimit(40); }}><option value="">所有类型</option>{Object.entries(kinds).map(([value, kind]) => <option key={value} value={value}>{kind.label}</option>)}</select><span className="kl-sort-label">最近更新 ↓</span></div></div>
+      {filter.trashed && <div className="kl-trash-toolbar"><p>{stats?.canEmptyTrash ? (stats.purgePending ? `${stats.purgePending} 份资料的文件清理未完成，可再次清空以重试。` : '清空将永久删除整个回收站，不受当前搜索和类型筛选限制。') : '请重启资料库服务以启用清空回收站。'}</p><button className="kl-secondary kl-danger" disabled={!stats?.canEmptyTrash || !(stats.trashed || stats.purgePending) || !!restoring} onClick={() => stats && setEmptyRoot(stats.root)}><Icon name="trash" size={15} />清空回收站</button></div>}
       <div className={`kl-body ${detail || detailLoading ? 'with-detail' : ''}`}>
         {showNavigation && <aside className="kl-nav" id="kl-directory" aria-label="分类与专题">
           <div className="kl-directory-title"><span>分类与专题</span><button className="kl-icon-button" aria-label="关闭分类导航" onClick={() => setShowNavigation(false)}><Icon name="close" size={16} /></button></div>
@@ -175,7 +177,7 @@ export function App() {
               <div className="kl-segment-line"><span>{segment.startSeconds !== undefined ? time(segment.startSeconds) : segment.id}</span><button title="摘录为笔记" aria-label={`摘录 ${segment.id} 为笔记`} onClick={() => setEditor({ mode: 'note', source: detail, segment })}><Icon name="note" size={14} /></button><button title="复制段落引用" aria-label={`复制 ${segment.id} 引用`} onClick={() => void copy(`library://${detail.id}/${segment.id}`)}><Icon name="copy" size={14} /></button></div>
               {/^#{1,6}\s/.test(segment.text) ? <h3>{segment.text.replace(/^#{1,6}\s+/, '')}</h3> : <p>{segment.text}</p>}
             </div>)}</div>
-            {!!detail.citations.length && <div className="kl-references"><h3>来源引用</h3>{detail.citations.map((c, i) => <button key={i} aria-label={`查看引用 ${i + 1}`} onClick={() => { setAnchor(c.segmentId); setSelected(c.materialId); }}><Icon name="file" size={15} /><span>{c.materialId.slice(0, 15)}…{c.segmentId ? ` / ${c.segmentId}` : ''}</span><Icon name="arrow" size={14} /></button>)}</div>}
+            {!!detail.citations.length && <div className="kl-references"><h3>来源引用</h3>{detail.citations.map((c, i) => <button key={i} disabled={detail.missingSources?.includes(c.materialId)} aria-label={`查看引用 ${i + 1}`} onClick={() => { setAnchor(c.segmentId); setSelected(c.materialId); }}><Icon name="file" size={15} /><span>{detail.missingSources?.includes(c.materialId) ? '来源已永久删除' : `${c.materialId.slice(0, 15)}…${c.segmentId ? ` / ${c.segmentId}` : ''}`}</span><Icon name="arrow" size={14} /></button>)}</div>}
             <footer className="kl-detail-footer"><div><span className="kl-live-dot" />{detail.extraction}</div>{detail.originalFile && <a href={`${API}/materials/${detail.id}/original`}>下载原始文件<Icon name="download" size={14} /></a>}<code>{detail.id}</code></footer>
           </article>}
         </section>}
@@ -188,6 +190,12 @@ export function App() {
       else { setShowJobs(true); notify('网页已加入采集队列'); }
     }} />}
     {deletion && <DeleteDialog item={deletion} onClose={() => setDeletion(undefined)} onDeleted={() => { setDeletion(undefined); afterRemoval(deletion.id, '资料已移入回收站，可随时恢复'); }} />}
+    {emptyRoot && <EmptyTrashDialog root={emptyRoot} onClose={() => setEmptyRoot(undefined)} onEmptied={result => {
+      setEmptyRoot(undefined); setSelected(undefined); setDetail(undefined); setAnchor(undefined); setError(''); refresh();
+      if (result.errors.length || result.pending) setError(`已永久删除 ${result.deleted} 份资料；${result.pending} 份文件待清理。${result.errors.join('；')}`);
+      else notify(`回收站已清空，永久删除 ${result.deleted} 份资料`);
+      searchRef.current?.focus();
+    }} />}
     {showJobs && <Dialog title="采集任务" description="网页在后台提取正文。关闭应用后，下次启动会恢复未完成任务。" onClose={() => setShowJobs(false)}>
       <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}>
         <div><span className={`kl-job-status ${job.status}`}>{job.status === 'failed' && job.errorCode === 'PAGE_REQUIRES_BROWSER' ? '需浏览器验证' : ({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div>
@@ -221,6 +229,23 @@ function DeleteDialog({ item, onClose, onDeleted }: { item: { id: string; title:
   }
   return <Dialog title="删除资料" description="资料将移入回收站，原文件保留，可随时恢复。" onClose={() => { if (!busy) onClose(); }}>
     <div className="kl-delete-dialog"><p className="kl-delete-title">{item.title}</p><p className="kl-muted">已有笔记仍能查看这份资料的来源引用。</p>{error && <p className="kl-form-error" role="alert">{error}</p>}<footer><button className="kl-secondary" disabled={busy} onClick={onClose}>取消</button><button className="kl-secondary kl-danger" disabled={busy} onClick={() => void remove()}>{busy ? '正在删除…' : '移入回收站'}</button></footer></div>
+  </Dialog>;
+}
+
+function EmptyTrashDialog({ root, onClose, onEmptied }: { root: string; onClose: () => void; onEmptied: (result: EmptyTrashResult) => void }) {
+  const [snapshot, setSnapshot] = useState<TrashSnapshot>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { const abort = new AbortController(); void api<TrashSnapshot>('/trash', { signal: abort.signal }).then(setSnapshot).catch(e => { if (!abort.signal.aborted) setError(e.message); }); return () => abort.abort(); }, []);
+  async function empty() {
+    if (!snapshot || busy) return;
+    setBusy(true); setError('');
+    try { onEmptied(await post<EmptyTrashResult>('/trash/empty', { expectedRoot: root, confirmed: true, token: snapshot.token })); }
+    catch (e) { setError((e as Error).message); setSnapshot(undefined); }
+    finally { setBusy(false); }
+  }
+  return <Dialog title="清空回收站" description="永久删除后无法恢复，请确认整个回收站内的资料都不再需要。" onClose={() => { if (!busy) onClose(); }}>
+    <div className="kl-delete-dialog"><p className="kl-delete-title">{snapshot ? `将永久删除回收站中的全部 ${snapshot.count} 份资料。` : error ? '请关闭窗口后重新确认。' : '正在核对回收站…'}</p>{!!snapshot?.pending && <p>另有 {snapshot.pending} 份已确认删除的文件将继续清理。</p>}<p className="kl-muted">正文、原始附件和索引将被移除。相关笔记的正文会保留，引用这些资料的位置将标记为“来源已永久删除”。</p>{error && <p role="alert" className="kl-form-error">{error}</p>}<footer><button className="kl-secondary" disabled={busy} onClick={onClose}>取消</button><button className="kl-secondary kl-danger" disabled={busy || !snapshot || !(snapshot.count || snapshot.pending)} onClick={() => void empty()}>{busy ? '正在永久删除…' : '永久清空'}</button></footer></div>
   </Dialog>;
 }
 

@@ -22,6 +22,7 @@ export interface Material {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
+  deletionId?: string;
   contentHash: string;
   textChecksum?: string;
   segmentsChecksum?: string;
@@ -36,6 +37,8 @@ export interface MaterialDetail extends Material {
   segments: Segment[];
   path: string;
 }
+export interface TrashSnapshot { count: number; pending: number; token: string }
+export interface EmptyTrashResult { deleted: number; pending: number; errors: string[] }
 export interface CaptureFields {
   title?: string;
   category?: string;

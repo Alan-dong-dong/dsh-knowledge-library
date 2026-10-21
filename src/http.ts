@@ -46,6 +46,7 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       if (req.method === 'GET') {
         if (path === '/settings') { send(res, 200, { root: library.root, ...(directories?.status() ?? { canChange: false, canChangeNetwork: false, picker: null, allowProxyFakeIp: false }) }); return; }
         if (path === '/stats') { send(res, 200, library.stats()); return; }
+        if (path === '/trash') { send(res, 200, library.trashSnapshot()); return; }
         if (path === '/materials') {
           send(res, 200, library.search({ ...Object.fromEntries(url.searchParams), trashed: url.searchParams.get('trashed') === '1', limit: Number(url.searchParams.get('limit')) || 40, offset: Number(url.searchParams.get('offset')) || 0 })); return;
         }
@@ -61,12 +62,18 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
             res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(original.name).replaceAll("'", '%27')}`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
             res.end(original.bytes); return;
           }
-          send(res, 200, library.get(match[1])); return;
+          const item = library.get(match[1]);
+          send(res, 200, { ...item, missingSources: item.citations.filter(c => !library.has(c.materialId)).map(c => c.materialId) }); return;
         }
       }
       if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'DELETE') {
         if (req.headers['x-knowledge-library'] !== '1') { send(res, 403, { error: '缺少同源请求标记' }); return; }
         const data = await body(req);
+        if (req.method === 'POST' && path === '/trash/empty') {
+          if (data.expectedRoot !== library.root) throw new Error('资料库目录已改变，请刷新后再操作');
+          if (data.confirmed !== true || typeof data.token !== 'string') throw new Error('请先确认永久清空回收站');
+          send(res, 200, library.emptyTrash(data.token)); return;
+        }
         if (req.method === 'POST' && ['/directory/pick', '/directory/list', '/settings/root', '/settings/network'].includes(path)) {
           if (!directories) throw new Error('请在 Harness 中修改资料库设置');
           if (path === '/settings/network') {
