@@ -14,10 +14,15 @@ with sync_playwright() as p:
     # Only the job presentation is a fixture; saving settings uses real host APIs.
     job = {'id': 'job_proxy_fixture', 'url': 'https://example.com/', 'status': 'failed', 'createdAt': '2026-10-20T00:00:00Z', 'error': '检测到代理 fake-IP DNS。请启用代理兼容。'}
     page.route('**/knowledge-library/api/jobs', lambda route: route.fulfill(json=[job]))
-    page.add_locator_handler(page.get_by_text('开始使用', exact=True), lambda: page.keyboard.press('Escape'))
+    onboarding = page.get_by_text('开始使用', exact=True)
+    # Close only the host guide: global Escape can also dismiss a plugin dialog.
+    page.add_locator_handler(onboarding, lambda: page.get_by_role('presentation').filter(has=onboarding).get_by_role('button').first.click())
     page.add_locator_handler(page.get_by_text('预览版说明', exact=True), lambda: page.get_by_role('button', name='继续', exact=True).click())
+    def open_library():
+        page.get_by_role('button', name='资料库', exact=True).click(timeout=30000)
+        expect(page.get_by_role('heading', name='全部资料', exact=True)).to_be_visible()
     page.goto(url)
-    page.get_by_role('button', name='资料库', exact=True).click(timeout=30000)
+    open_library()
     api = '/knowledge-library/api'
     def state():
         response = page.request.get(api + '/settings')
@@ -61,7 +66,7 @@ with sync_playwright() as p:
         save(dialog)
         assert state()['allowProxyFakeIp'] is False
         page.reload()
-        page.get_by_role('button', name='资料库', exact=True).click()
+        open_library()
         dialog = open_settings()
         expect(dialog.get_by_role('checkbox')).not_to_be_checked()
         # A failed response must keep the draft editable without claiming success.
@@ -86,7 +91,7 @@ with sync_playwright() as p:
         source = 'https://mp.weixin.qq.com/s/test-article'
         job.update(id='job_verification_fixture', url=source, errorCode='PAGE_REQUIRES_BROWSER', error='微信返回了验证页面，尚未获取文章正文。请在浏览器打开原网页，完成验证后粘贴正文，或导入保存的 HTML。后台采集不共享浏览器的验证状态。')
         page.reload()
-        page.get_by_role('button', name='资料库', exact=True).click()
+        open_library()
         page.get_by_role('button', name='采集任务', exact=True).click()
         dialog = page.get_by_role('dialog', name='采集任务', exact=True)
         expect(dialog.get_by_text('需浏览器验证', exact=True)).to_be_visible()

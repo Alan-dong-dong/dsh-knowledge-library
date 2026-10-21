@@ -96,6 +96,10 @@
 .kl-body.with-detail .kl-list { flex: 0 0 38%; padding: 0 16px 24px calc(var(--kl-gutter) - 8px); }
 .kl-item { width: 100%; display: block; text-align: left; padding: 14px 12px; margin-bottom: 2px; border: 0; border-radius: var(--kl-radius); background: transparent; }
 .kl-item:hover, .kl-item.selected { background: var(--kl-hover); }
+.kl-item-row { position: relative; }
+.kl-item-row .kl-item { padding-right: 48px; }
+.kl-app .kl-row-action { position: absolute; top: 8px; right: 8px; }
+.kl-app .kl-danger, .kl-app .kl-danger:hover { color: var(--kl-error); }
 .kl-item-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 5px; }
 .kl-type { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--kl-muted); }
 .kl-item time { color: var(--kl-muted); font-size: 12px; }
@@ -176,6 +180,9 @@
 .kl-dialog > header p { margin: 0; color: var(--kl-muted); font-size: 12px; line-height: 1.7; }
 .kl-dialog > header > button { border: 0; border-radius: 8px; background: transparent; color: var(--kl-muted); padding: 4px; display: flex; }
 .kl-dialog > header > button:hover { background: var(--kl-hover); }
+.kl-delete-dialog { padding: 0 24px 24px; }
+.kl-delete-title { margin: 0 0 12px; font-weight: 500; overflow-wrap: anywhere; }
+.kl-delete-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 .kl-editor { padding: 0 24px; }
 .kl-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
 .kl-tabs button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; background: transparent; border: 0; color: var(--kl-muted); border-radius: 14px; min-height: 32px; padding: 5px 8px; font-size: 13px; }
@@ -266,6 +273,8 @@
   .kl-empty { padding: 40px 12px; }
   .kl-detail article { padding: 20px; }
   .kl-detail-toolbar { padding: 8px 12px; }
+  .kl-detail-toolbar { flex-wrap: wrap; }
+  .kl-detail-toolbar > div { margin-left: auto; }
   .kl-error { margin: 0 20px 12px; }
 }
 /* Fixed dialogs use viewport width even when the host panel is narrow. */
@@ -280,6 +289,7 @@
   .kl-tabs button { padding: 5px; font-size: 12px; }
   .kl-form-grid { gap: 12px; }
   .kl-jobs, .kl-info { padding: 0 18px 20px; }
+  .kl-delete-dialog { padding: 0 18px 20px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .kl-app * { animation: none !important; transition: none !important; }

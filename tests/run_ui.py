@@ -16,7 +16,7 @@ with socket.socket() as sock:
     port = sock.getsockname()[1]
 env = os.environ.copy()
 env.update(KNOWLEDGE_LIBRARY_ROOT=str(runtime / "library"), KNOWLEDGE_LIBRARY_ALLOW_FAKE_IP="0", PORT=str(port), LIBRARY_TEST_URL=f"http://127.0.0.1:{port}")
-for script, log_name in [("ui_smoke.py", "server.log"), ("preview_restart.py", "restart-server.log")]:
+for script, log_name in [("ui_smoke.py", "server.log"), ("ui_trash.py", "trash-server.log"), ("ui_trash_restart.py", "trash-restart-server.log"), ("preview_restart.py", "restart-server.log")]:
     with (runtime / log_name).open("w", encoding="utf-8") as log:
         server = subprocess.Popen(["node", "dist/standalone.js"], cwd=project, env=env, stdout=log, stderr=subprocess.STDOUT,
                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)

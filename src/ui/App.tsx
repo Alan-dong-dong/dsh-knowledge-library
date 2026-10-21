@@ -8,8 +8,8 @@ const kinds: Record<MaterialKind, { label: string; icon: string }> = {
   web: { label: '网页', icon: 'web' }, text: { label: '文本', icon: 'file' }, file: { label: '文件', icon: 'file' },
   video: { label: '音视频', icon: 'video' }, transcript: { label: '字幕', icon: 'video' }, note: { label: '笔记', icon: 'note' },
 };
-type Stats = { total: number; ready: number; notes: number; inbox: number; root: string; warnings: string[]; categories: Array<{ name: string; count: number }>; collections: Array<{ name: string; count: number }>; tags: Array<{ name: string; count: number }> };
-type Filter = { category?: string; collection?: string; kind?: string; tag?: string };
+type Stats = { total: number; trashed: number; ready: number; notes: number; inbox: number; root: string; warnings: string[]; categories: Array<{ name: string; count: number }>; collections: Array<{ name: string; count: number }>; tags: Array<{ name: string; count: number }> };
+type Filter = { category?: string; collection?: string; kind?: string; tag?: string; trashed?: '1' };
 type Editor = { mode: 'capture' | 'note' | 'edit'; source?: MaterialDetail; segment?: Segment; initialType?: 'text'; sourceUrl?: string };
 const time = (v: number) => `${String(Math.floor(v / 3600)).padStart(2, '0')}:${String(Math.floor(v / 60) % 60).padStart(2, '0')}:${String(Math.floor(v) % 60).padStart(2, '0')}`;
 const date = (value: string) => new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(value));
@@ -32,6 +32,8 @@ export function App() {
   const [detail, setDetail] = useState<MaterialDetail>();
   const [anchor, setAnchor] = useState<string>();
   const [editor, setEditor] = useState<Editor>();
+  const [deletion, setDeletion] = useState<{ id: string; title: string; root: string }>();
+  const [restoring, setRestoring] = useState<string>();
   const [jobs, setJobs] = useState<ImportJob[]>([]);
   const [showJobs, setShowJobs] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
@@ -102,7 +104,21 @@ export function App() {
     try { await navigator.clipboard.writeText(text); notify('引用已复制'); }
     catch { setError('剪贴板不可用，请从资料详情手动复制资料 ID'); }
   }
-  const currentTitle = filter.category || filter.collection || (filter.tag ? `标签 · ${filter.tag}` : filter.kind === 'note' ? '知识笔记' : '全部资料');
+  function askDelete(item: { id: string; title: string }) {
+    if (stats) setDeletion({ id: item.id, title: item.title, root: stats.root });
+  }
+  function afterRemoval(id: string, message: string) {
+    if (selected === id) { setSelected(undefined); setDetail(undefined); setAnchor(undefined); }
+    refresh(); notify(message); searchRef.current?.focus();
+  }
+  async function restoreItem(id: string) {
+    if (!stats || restoring) return;
+    setRestoring(id);
+    try { await post(`/materials/${id}/restore`, { expectedRoot: stats.root }); afterRemoval(id, '资料已恢复到原分类'); }
+    catch (e) { setError((e as Error).message); }
+    finally { setRestoring(undefined); }
+  }
+  const currentTitle = filter.trashed ? '回收站' : filter.category || filter.collection || (filter.tag ? `标签 · ${filter.tag}` : filter.kind === 'note' ? '知识笔记' : '全部资料');
   return <div className="kl-app">
     <main className="kl-workspace">
       <header className="kl-header"><h1>{currentTitle}</h1><div className="kl-header-actions"><button className="kl-secondary" onClick={() => setEditor({ mode: 'note' })}><Icon name="note" size={16} />写笔记</button><button className="kl-primary" onClick={() => setEditor({ mode: 'capture' })}><Icon name="plus" size={16} />收集资料</button></div></header>
@@ -111,6 +127,7 @@ export function App() {
           <button aria-pressed={!Object.values(filter).some(Boolean)} onClick={() => chooseFilter({})}>全部资料</button>
           <button aria-pressed={filter.category === '收件箱'} onClick={() => chooseFilter({ category: '收件箱' })}>收件箱</button>
           <button aria-pressed={filter.kind === 'note'} onClick={() => chooseFilter({ kind: 'note' })}>知识笔记</button>
+          <button aria-pressed={filter.trashed === '1'} onClick={() => chooseFilter({ trashed: '1' })}>回收站</button>
         </nav>
         <button className="kl-directory-toggle" aria-expanded={showNavigation} aria-controls="kl-directory" onClick={() => setShowNavigation(v => !v)}><Icon name="folder" size={16} />分类与专题</button>
       </div>
@@ -136,22 +153,23 @@ export function App() {
         </aside>}
         <section className="kl-list" aria-label="资料列表" aria-busy={loading}>
           {loading && !items.length ? <div className="kl-empty"><span className="kl-spinner" />正在读取资料库…</div> : !items.length ? <div className="kl-empty">
-            <Icon name="inbox" size={28} /><h2>{query || Object.values(filter).some(Boolean) ? '没有找到匹配的资料' : '还没有资料，收集的内容会显示在这里'}</h2>
+            <Icon name={filter.trashed ? 'trash' : 'inbox'} size={28} /><h2>{filter.trashed ? '回收站中没有匹配的资料' : query || Object.values(filter).some(Boolean) ? '没有找到匹配的资料' : '还没有资料，收集的内容会显示在这里'}</h2>
             {query && <p>试试其他关键词，或切换分类。</p>}<button className="kl-secondary" onClick={() => query || Object.values(filter).some(Boolean) ? (setQuery(''), chooseFilter({})) : setEditor({ mode: 'capture' })}>{query || Object.values(filter).some(Boolean) ? '查看全部资料' : '收集第一份资料'}</button>
-          </div> : items.map(item => <button className={`kl-item ${selected === item.id ? 'selected' : ''}`} key={item.id} onClick={() => { setAnchor(undefined); setSelected(item.id); }}>
+          </div> : items.map(item => <div className="kl-item-row" key={item.id}><button className={`kl-item ${selected === item.id ? 'selected' : ''}`} onClick={() => { setAnchor(undefined); setSelected(item.id); }}>
             <div className="kl-item-top"><span className={`kl-type kl-type-${item.kind}`}><Icon name={kinds[item.kind].icon} size={15} />{kinds[item.kind].label}</span><time>{date(item.createdAt)}</time></div>
             <h2>{item.title}</h2><p>{item.excerpt || item.extraction}</p>
             <div className="kl-item-bottom"><span className="kl-category"><Icon name="folder" size={13} />{item.category}</span>{item.tags.slice(0, 2).map(tag => <span className="kl-chip" key={tag}>{tag}</span>)}{item.status === 'stored' && <span className="kl-stored">仅归档</span>}<Icon name="arrow" size={15} /></div>
-          </button>)}
+          </button><button className={`kl-icon-button kl-row-action ${item.deletedAt ? '' : 'kl-danger'}`} title={item.deletedAt ? '恢复资料' : '删除资料'} aria-label={`${item.deletedAt ? '恢复' : '删除'} ${item.title}`} disabled={!stats || !!restoring} onClick={() => item.deletedAt ? void restoreItem(item.id) : askDelete(item)}><Icon name={item.deletedAt ? 'restore' : 'trash'} size={16} /></button></div>)}
           {items.length < total && <button className="kl-load-more" onClick={() => setLimit(v => Math.min(100, v + 40))} disabled={limit >= 100}>{limit >= 100 ? '请缩小搜索范围（最多显示 100 条）' : '加载更多'}</button>}
         </section>
         {selected && <section className="kl-detail" aria-label="资料详情" ref={detailRef}>
-          <div className="kl-detail-toolbar"><button className="kl-back" onClick={() => { setSelected(undefined); setDetail(undefined); }}><Icon name="close" size={18} /><span>关闭阅读</span></button>{detail && <div><button title="复制资料引用" aria-label="复制资料引用" onClick={() => void copy(`library://${detail.id}`)}><Icon name="copy" size={17} /></button><a title="导出 Markdown" aria-label="导出 Markdown" href={`${API}/materials/${detail.id}/export`}><Icon name="download" size={17} /></a><button onClick={() => setEditor({ mode: 'edit', source: detail })}>编辑信息</button></div>}</div>
+          <div className="kl-detail-toolbar"><button className="kl-back" onClick={() => { setSelected(undefined); setDetail(undefined); }}><Icon name="close" size={18} /><span>关闭阅读</span></button>{detail && <div><button title="复制资料引用" aria-label="复制资料引用" onClick={() => void copy(`library://${detail.id}`)}><Icon name="copy" size={17} /></button><a title="导出 Markdown" aria-label="导出 Markdown" href={`${API}/materials/${detail.id}/export`}><Icon name="download" size={17} /></a>{detail.deletedAt ? <button disabled={!stats || !!restoring} onClick={() => void restoreItem(detail.id)}><Icon name="restore" size={16} />恢复资料</button> : <><button onClick={() => setEditor({ mode: 'edit', source: detail })}>编辑信息</button><button className="kl-danger" title="删除资料" aria-label="删除资料" disabled={!stats || !!restoring} onClick={() => askDelete(detail)}><Icon name="trash" size={17} /></button></>}</div>}</div>
           {detailLoading ? <div className="kl-empty"><span className="kl-spinner" />读取中…</div> : detail && <article>
             <div className="kl-detail-kicker"><span>{kinds[detail.kind].label}</span><span>{detail.category}</span></div><h2>{detail.title}</h2>
             <div className="kl-source">{detail.sourceUrl ? <a href={detail.sourceUrl} target="_blank" rel="noreferrer">{new URL(detail.sourceUrl).hostname}<Icon name="arrow" size={12} /></a> : <span>{detail.originalName || '本地收集'}</span>}<span>{new Date(detail.createdAt).toLocaleDateString('zh-CN')}</span>{detail.author && <span>{detail.author}</span>}</div>
             {!!detail.tags.length && <div className="kl-detail-tags">{detail.tags.map(t => <span className="kl-chip" key={t}>#{t}</span>)}</div>}
             {detail.sourceNote && <aside className="kl-source-note">{detail.sourceNote}</aside>}
+            {detail.deletedAt && <div className="kl-notice"><Icon name="trash" /><div><strong>这份资料在回收站</strong><p>原文与来源引用仍可查看，恢复后回到原分类。</p></div></div>}
             {detail.status === 'stored' && <div className="kl-notice"><Icon name="file" /><div><strong>原文件已安全归档</strong><p>{detail.extraction}</p></div></div>}
             <div className="kl-content">{detail.segments.map(segment => <div className={`kl-segment ${anchor === segment.id ? 'kl-cited' : ''}`} key={segment.id} id={segment.id} data-segment-id={segment.id}>
               <div className="kl-segment-line"><span>{segment.startSeconds !== undefined ? time(segment.startSeconds) : segment.id}</span><button title="摘录为笔记" aria-label={`摘录 ${segment.id} 为笔记`} onClick={() => setEditor({ mode: 'note', source: detail, segment })}><Icon name="note" size={14} /></button><button title="复制段落引用" aria-label={`复制 ${segment.id} 引用`} onClick={() => void copy(`library://${detail.id}/${segment.id}`)}><Icon name="copy" size={14} /></button></div>
@@ -169,6 +187,7 @@ export function App() {
       else if (result.id) { setSelected(result.id); notify('资料信息已更新'); }
       else { setShowJobs(true); notify('网页已加入采集队列'); }
     }} />}
+    {deletion && <DeleteDialog item={deletion} onClose={() => setDeletion(undefined)} onDeleted={() => { setDeletion(undefined); afterRemoval(deletion.id, '资料已移入回收站，可随时恢复'); }} />}
     {showJobs && <Dialog title="采集任务" description="网页在后台提取正文。关闭应用后，下次启动会恢复未完成任务。" onClose={() => setShowJobs(false)}>
       <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}>
         <div><span className={`kl-job-status ${job.status}`}>{job.status === 'failed' && job.errorCode === 'PAGE_REQUIRES_BROWSER' ? '需浏览器验证' : ({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div>
@@ -189,6 +208,20 @@ export function App() {
     }} onRebuilt={() => { refresh(); notify('索引已重建'); }} onProxySaved={enabled => { refresh(); notify(enabled ? '代理兼容已开启，可重新采集失败任务' : '代理兼容已关闭'); if (settingsFromJobs) { setShowInfo(false); setShowJobs(true); setSettingsFromJobs(false); } }} />}
     {toast && <div className="kl-toast" role="status"><Icon name="check" size={17} />{toast}</div>}
   </div>;
+}
+
+function DeleteDialog({ item, onClose, onDeleted }: { item: { id: string; title: string; root: string }; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function remove() {
+    setBusy(true); setError('');
+    try { await post(`/materials/${item.id}`, { expectedRoot: item.root }, 'DELETE'); onDeleted(); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <Dialog title="删除资料" description="资料将移入回收站，原文件保留，可随时恢复。" onClose={() => { if (!busy) onClose(); }}>
+    <div className="kl-delete-dialog"><p className="kl-delete-title">{item.title}</p><p className="kl-muted">已有笔记仍能查看这份资料的来源引用。</p>{error && <p className="kl-form-error" role="alert">{error}</p>}<footer><button className="kl-secondary" disabled={busy} onClick={onClose}>取消</button><button className="kl-secondary kl-danger" disabled={busy} onClick={() => void remove()}>{busy ? '正在删除…' : '移入回收站'}</button></footer></div>
+  </Dialog>;
 }
 
 function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt, onProxySaved }: { root: string; warnings: string[]; onClose: () => void; onChanged: () => void; onRebuilt: () => void; onProxySaved: (enabled: boolean) => void }) {

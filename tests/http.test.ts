@@ -46,6 +46,24 @@ test('HTTP UI API persists captures, validates notes, updates metadata and rejec
     assert.equal((await request('/settings/root', { root: join(root, 'other'), expectedRoot: root })).status, 400);
     assert.equal((await request('/settings/network', { allowProxyFakeIp: true, expected: false, expectedRoot: root })).status, 400);
     assert.equal((await (await fetch(origin + API_PATH + `/materials/${saved.material.id}/export`)).text()).includes('中文资料'), true);
+    const materialPath = `/materials/${saved.material.id}`;
+    const deletion = { expectedRoot: root };
+    assert.equal((await fetch(origin + API_PATH + materialPath, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(deletion) })).status, 403);
+    assert.equal((await fetch(origin + API_PATH + materialPath, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-Knowledge-Library': '1', Origin: 'https://attacker.example' }, body: JSON.stringify(deletion) })).status, 403);
+    assert.equal((await request(materialPath, { expectedRoot: join(root, 'old-library') }, 'DELETE')).status, 400);
+    assert.equal(library.get(saved.material.id).deletedAt, undefined);
+    const count = library.stats().total;
+    assert.equal((await request(materialPath, deletion, 'DELETE')).status, 200);
+    assert.equal((await (await fetch(origin + API_PATH + '/materials?query=中文')).json() as any).total, 0);
+    assert.equal((await (await fetch(origin + API_PATH + '/materials?trashed=1')).json() as any).items[0].id, saved.material.id);
+    assert.equal(library.stats().total, count - 1);
+    assert.equal((await fetch(origin + API_PATH + materialPath)).status, 200);
+    assert.equal((await request(materialPath, { title: '隐藏编辑' }, 'PATCH')).status, 400);
+    assert.equal((await request(materialPath + '/restore', {})).status, 400);
+    assert.ok(library.get(saved.material.id).deletedAt);
+    assert.equal((await request(materialPath + '/restore', deletion)).status, 200);
+    assert.equal(library.get(saved.material.id).deletedAt, undefined);
+    assert.equal(library.stats().total, count);
   } finally {
     await queue.close(); library.close();
     server.closeAllConnections();

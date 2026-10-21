@@ -19,6 +19,8 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
     copy: <><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V3H3v13h5" /></>,
     download: <><path d="M12 3v13m-5-5 5 5 5-5M3 17v4h18v-4" /></>,
     settings: <><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" /><circle cx="15" cy="17" r="3" /></>,
+    trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></>,
+    restore: <><path d="M3 10a9 9 0 1 1 2 9M3 4v6h6M12 7v5l3 2" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] || paths.file}</svg>;
 }

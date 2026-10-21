@@ -21,6 +21,7 @@ export interface Material {
   author?: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
   contentHash: string;
   textChecksum?: string;
   segmentsChecksum?: string;
@@ -49,6 +50,7 @@ export interface SearchOptions {
   tag?: string;
   collection?: string;
   kind?: string;
+  trashed?: boolean;
   limit?: number;
   offset?: number;
 }

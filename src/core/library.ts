@@ -134,7 +134,7 @@ export class Library {
     if (content.length > MAX_TEXT_CHARS) throw new Error('正文超过 200 万字符，请拆分后导入');
     const digest = hash(`${extra.kind}\0${original ? hash(original.bytes) : content}\0${fields.sourceUrl ?? ''}\0${JSON.stringify(extra.citations ?? [])}`);
     const duplicate = this.db.prepare('SELECT id FROM materials WHERE content_hash=? LIMIT 1').get(digest) as { id: string } | undefined;
-    if (duplicate) return { material: this.get(duplicate.id), duplicate: true };
+    if (duplicate) return { material: this.get(duplicate.id).deletedAt ? this.restore(duplicate.id) : this.get(duplicate.id), duplicate: true };
     const category = categoryName(fields.category);
     const id = `r_${randomUUID()}`;
     const timestamp = now();
@@ -220,6 +220,7 @@ export class Library {
   }
   update(id: string, fields: CaptureFields): MaterialDetail {
     const item = this.get(id);
+    if (item.deletedAt) throw new Error('请先从回收站恢复资料后再编辑');
     const { content, segments: _segments, path: oldPath, ...meta } = item;
     if (fields.title !== undefined) {
       if (!cleanString(fields.title)) throw new Error('标题不能为空');
@@ -236,6 +237,30 @@ export class Library {
     atomicJson(join(path, 'metadata.json'), meta);
     this.db.exec('BEGIN IMMEDIATE');
     try { this.index(meta, path, content); this.db.exec('COMMIT'); } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return this.get(id);
+  }
+  trash(id: string): MaterialDetail { return this.setDeleted(id, true); }
+  restore(id: string): MaterialDetail { return this.setDeleted(id, false); }
+  private setDeleted(id: string, deleted: boolean): MaterialDetail {
+    const item = this.get(id);
+    if (Boolean(item.deletedAt) === deleted) return item;
+    const { content, segments: _segments, path, ...previous } = item;
+    const meta = { ...previous, updatedAt: now() };
+    if (deleted) meta.deletedAt = now();
+    else delete meta.deletedAt;
+    // Keep the canonical files and stable IDs in place so existing citations
+    // remain readable. The flag also survives rebuilding a lost SQLite index.
+    this.db.exec('BEGIN IMMEDIATE');
+    let written = false;
+    try {
+      atomicJson(join(path, 'metadata.json'), meta); written = true;
+      this.index(meta, path, content);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      if (written) atomicJson(join(path, 'metadata.json'), previous);
+      throw error;
+    }
     return this.get(id);
   }
   saveNote(content: string, citations: Citation[], fields: CaptureFields): CaptureResult {
@@ -261,6 +286,7 @@ export class Library {
     }
     const matched = rows.filter(row => {
       const meta = JSON.parse(row.meta) as Material;
+      if (Boolean(meta.deletedAt) !== (options.trashed === true)) return false;
       if (options.category && meta.category !== options.category && !meta.category.startsWith(`${options.category}/`)) return false;
       if (options.kind && meta.kind !== options.kind) return false;
       if (options.tag && !meta.tags.includes(options.tag)) return false;
@@ -283,13 +309,14 @@ export class Library {
   }
   stats() {
     const rows = this.db.prepare('SELECT meta FROM materials').all() as Array<{ meta: string }>;
-    const materials = rows.map(row => JSON.parse(row.meta) as Material);
+    const all = rows.map(row => JSON.parse(row.meta) as Material);
+    const materials = all.filter(item => !item.deletedAt);
     const count = (select: (m: Material) => string[]) => {
       const map = new Map<string, number>();
       for (const m of materials) for (const key of select(m)) if (key) map.set(key, (map.get(key) || 0) + 1);
       return [...map].sort((a, b) => a[0].localeCompare(b[0], 'zh')).map(([name, count]) => ({ name, count }));
     };
-    return { total: materials.length, ready: materials.filter(m => m.status === 'ready').length, notes: materials.filter(m => m.kind === 'note').length,
+    return { total: materials.length, trashed: all.length - materials.length, ready: materials.filter(m => m.status === 'ready').length, notes: materials.filter(m => m.kind === 'note').length,
       inbox: materials.filter(m => m.category === '收件箱').length, categories: count(m => [m.category]),
       tags: count(m => m.tags), collections: count(m => [m.collection]), root: this.root, warnings: [...this.warnings] };
   }
