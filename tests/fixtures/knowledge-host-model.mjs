@@ -6,8 +6,9 @@ class FixtureAdapter extends LlmAdapter {
   constructor(ctx) { super(); this.ctx = ctx; }
   providerInfo(provider) { return { id: provider, name: 'Knowledge fixture' }; }
   async listModels(provider) { return [{ provider, id: 'knowledge-fixture', name: 'Knowledge fixture', inputModalities: ['text', 'image'] }]; }
-  async resolveModel(provider, model) { return { provider, id: model, name: model, context: { contextWindow: 64_000 }, inputModalities: ['text', 'image'] }; }
+  async resolveModel(provider, model) { return { provider, id: model, name: model, context: { contextWindow: 64_000 }, defaultMaxTokens: 48_000, inputModalities: ['text', 'image'] }; }
   async *stream(options) {
+    if (options.maxTokens !== 48_000) throw new Error('Plugin must inherit the fixture adapter output configuration');
     const base = process.env.KNOWLEDGE_TEST_PROVIDER;
     if (!base?.startsWith('http://127.0.0.1:')) throw new Error('Fixture provider must be local');
     const messages = await Promise.all(options.messages.map(async m => {

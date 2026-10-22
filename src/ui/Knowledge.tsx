@@ -4,7 +4,6 @@ import { api, post } from './api.js';
 import { Dialog } from './Dialog.js';
 import { Icon } from './icons.js';
 import { GroupingEditor } from './Grouping.js';
-import { knowledgeTokenBudgets } from '../model-budget.js';
 
 const stateLabels = { pending: '待整理', running: '整理中', grouping: '待分组确认', draft: '待确认', completed: '已整理', failed: '整理失败' };
 const jobLabels: Record<KnowledgeJob['status'], string> = { queued: '排队中', running: '整理中', grouping: '待分组确认', classifying: '归类中', grouped: '已分组', draft: '待确认', completed: '已保存', failed: '失败', cancelled: '已取消', discarded: '已舍弃' };
@@ -41,7 +40,7 @@ export function StartKnowledgeDialog({ root, sourceIds, model, initialMode, onCl
       <p className="kl-muted">{smart ? '逐篇提取主题、概念与用途，给出分组理由和分类标签建议。无关联资料可独立成组，信息不足的资料保留待整理。确认方案前不移动资料。' : '将提炼核心观点、关键概念、可复用方法、适用条件与局限、待验证问题，并标注来源段落。'}</p>
       {smart && !model.smartSupported && <p role="alert" className="kl-form-error">请重启资料库服务以启用智能分组。</p>}
       {model.available ? <p className="kl-knowledge-model">使用模型：{model.model}。点击开始后会向该模型发送所选正文及检索到的相关知识笔记，可能产生调用费用。{smart ? '逐篇分析和分组最多 40 次请求；确认后各组继续生成草稿，整次任务合计最多 80 次。' : '长文会分段提炼，含旧笔记对比最多 22 次模型请求。'}单次最多 10 份、正文总量 10 万字。</p> : <div><p role="alert" className="kl-form-error">{model.reason}</p><a className="kl-knowledge-help" href="https://github.com/Alan-dong-dong/dsh-knowledge-library#将资料整理为知识笔记" target="_blank" rel="noreferrer">查看模型配置说明 <Icon name="arrow" size={12} /></a></div>}
-      {model.available && <details className="kl-knowledge-model"><summary>输出额度与思考</summary><p>每次提炼/分析最多 {knowledgeTokenBudgets.evidence.toLocaleString()} tokens，分组最多 {knowledgeTokenBudgets.grouping.toLocaleString()}，综合/增量对比最多 {knowledgeTokenBudgets.draft.toLocaleString()}；宿主配置或服务公布额度更低时取较小值。保留当前思考强度，部分模型将思考与正文一起计入额度。上限不代表实际用量，费用按模型服务规则计算。提炼/分析每次最多等待 5 分钟，分组/综合/对比最多 10 分钟，可随时取消；截断不会自动重试。</p></details>}
+      {model.available && <details className="kl-knowledge-model"><summary>输出配置与思考</summary><p>输出额度沿用当前模型配置，插件不另设 token 上限。Harness 使用模型适配器的默认输出配置，独立预览使用模型服务默认配置。保留当前思考强度，部分模型将思考与正文一起计入额度，费用按模型服务规则计算。提炼/分析每次最多等待 5 分钟，分组/综合/对比最多 10 分钟，可随时取消；截断不会自动重试。</p></details>}
       {characters > 100_000 && <p role="alert" className="kl-form-error">正文超过 10 万字，请减少选择后分批整理。</p>}
       {invalidSource && <p role="alert" className="kl-form-error">部分资料已删除、仅归档或属于知识笔记，请重新选择。</p>}
       {error && <p role="alert" className="kl-form-error">{error}</p>}

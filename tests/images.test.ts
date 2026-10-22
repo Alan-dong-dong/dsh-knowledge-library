@@ -63,6 +63,7 @@ test('automatic image capture preserves original paragraphs, isolates failures, 
     assert.equal(f.library.search({ query: '识别率' }).items[0].matches.some(s => s.id.startsWith('v_')), true);
     assert.deepEqual(f.library.pageImageFile(id, detail.images![1].id).bytes, png); assert.equal(f.downloads, 2);
     assert.equal(f.requests[0].images?.[0].mediaType, 'image/png'); assert.deepEqual(Buffer.from(f.requests[0].images![0].data), png);
+    assert.ok(f.requests.every(request => !Object.hasOwn(request, 'maxTokens')), 'image recognition must inherit model defaults');
     const failed = detail.images!.filter(i => i.status === 'failed').map(i => i.id);
     await assert.rejects(f.queue.retryImages(job.id, 'fixture', []), /范围/);
     f.fail(false); await f.queue.retryImages(job.id, 'fixture', failed); await f.queue.idle();
@@ -205,20 +206,32 @@ test('image HTTP routes enforce consent, current root, same origin and serve ver
 
 test('native Harness image blocks use saved attachments and reject text-only capability before sending', async () => {
   let vision = true; let calls = 0; const ref = { id: 'native-image-ref', mediaType: 'image/png' };
-  const services = { llm: { listProviders: () => [{ id: 'test' }], resolveModelInfo: async () => ({ inputModalities: vision ? ['text', 'image'] : ['text'] }), async *stream(options: any) { calls++; assert.deepEqual(options.messages[0].content[1], { type: 'image', attachment: ref }); yield { type: 'block-end', block: { type: 'text', text: answer } }; yield { type: 'finish', reason: { kind: 'stop' } }; } }, agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: 'vision' }) }, attachments: { saveImages: async (images: any[]) => { assert.deepEqual(Buffer.from(images[0].data), png); return [ref]; } } };
+  const services = { llm: { listProviders: () => [{ id: 'test' }], resolveModelInfo: async () => ({ inputModalities: vision ? ['text', 'image'] : ['text'] }), async *stream(options: any) { calls++; assert.equal(Object.hasOwn(options, 'maxTokens'), false); assert.deepEqual(options.messages[0].content[1], { type: 'image', attachment: ref }); yield { type: 'block-end', block: { type: 'text', text: answer } }; yield { type: 'finish', reason: { kind: 'stop' } }; } }, agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: 'vision' }) }, attachments: { saveImages: async (images: any[]) => { assert.deepEqual(Buffer.from(images[0].data), png); return [ref]; } } };
   const model = harnessKnowledgeModel({ get: (name: keyof typeof services) => services[name] } as any);
-  const request: ModelRequest = { system: '规则', prompt: '识图', maxTokens: 100, expectedModel: 'test / vision', signal: new AbortController().signal, images: [{ data: png, mediaType: 'image/png' }] };
+  const request: ModelRequest = { system: '规则', prompt: '识图', expectedModel: 'test / vision', signal: new AbortController().signal, images: [{ data: png, mediaType: 'image/png' }] };
   assert.equal(await model.generate(request), answer); vision = false; await assert.rejects(model.generate(request), /图片输入能力/); assert.equal(calls, 1);
+});
+
+test('image preparation cannot silently change the model or reasoning before dispatch', async () => {
+  let reasoningEffort = 'max'; let calls = 0;
+  const services = {
+    llm: { listProviders: () => [{ id: 'test' }], resolveModelInfo: async () => ({ inputModalities: ['text', 'image'] }), async *stream() { calls++; } },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: 'vision', reasoningEffort }) },
+    attachments: { saveImages: async () => { reasoningEffort = 'low'; return [{ id: 'ref', mediaType: 'image/png' }]; } },
+  };
+  const model = harnessKnowledgeModel({ get: (name: keyof typeof services) => services[name] } as any);
+  await assert.rejects(model.generate({ system: 'rules', prompt: 'read image', expectedModel: 'test / vision', signal: new AbortController().signal, images: [{ data: png, mediaType: 'image/png' }] }), /模型配置已改变/);
+  assert.equal(calls, 0);
 });
 
 test('preview sends base64 image content over actual compatible HTTP after capability discovery', async () => {
   let calls = 0; const server = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json'); assert.equal(req.headers.authorization, 'Bearer isolated-key');
     if (req.url === '/v1/models') { res.end(JSON.stringify({ data: [{ id: 'vision', input_modalities: ['text', 'image'] }] })); return; }
-    calls++; const chunks = []; for await (const chunk of req) chunks.push(chunk); const body = JSON.parse(Buffer.concat(chunks).toString()); const image = body.messages[1].content[1]; assert.equal(image.type, 'image_url'); assert.equal(image.image_url.url, `data:image/png;base64,${png.toString('base64')}`);
+    calls++; const chunks = []; for await (const chunk of req) chunks.push(chunk); const body = JSON.parse(Buffer.concat(chunks).toString()); assert.equal(Object.hasOwn(body, 'max_tokens'), false); const image = body.messages[1].content[1]; assert.equal(image.type, 'image_url'); assert.equal(image.image_url.url, `data:image/png;base64,${png.toString('base64')}`);
     res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answer } }] }));
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-  try { const model = previewKnowledgeModel({ KNOWLEDGE_LIBRARY_MODEL_API_KEY: 'isolated-key', KNOWLEDGE_LIBRARY_MODEL: 'vision', KNOWLEDGE_LIBRARY_MODEL_BASE_URL: `http://127.0.0.1:${(server.address() as any).port}/v1` }); assert.equal(await model.generate({ system: 'rules', prompt: 'read image', maxTokens: 100, signal: new AbortController().signal, images: [{ data: png, mediaType: 'image/png' }] }), answer); assert.equal(calls, 1); }
+  try { const model = previewKnowledgeModel({ KNOWLEDGE_LIBRARY_MODEL_API_KEY: 'isolated-key', KNOWLEDGE_LIBRARY_MODEL: 'vision', KNOWLEDGE_LIBRARY_MODEL_BASE_URL: `http://127.0.0.1:${(server.address() as any).port}/v1` }); assert.equal(await model.generate({ system: 'rules', prompt: 'read image', signal: new AbortController().signal, images: [{ data: png, mediaType: 'image/png' }] }), answer); assert.equal(calls, 1); }
   finally { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); }
 });

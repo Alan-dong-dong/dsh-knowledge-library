@@ -68,6 +68,7 @@ try:
     patch.write_text('- id: knowledge-library\n  config:\n    root: ' + json.dumps((runtime / 'library').as_posix()) + '\n- id: agent-default-model\n  config:\n    provider: knowledge-test\n    model: knowledge-fixture\n- insert:\n    - id: knowledge-model-fixture\n      name: ' + json.dumps((project / 'tests/fixtures/knowledge-host-model.mjs').as_posix()) + '\n', encoding='utf-8')
     run()
     initial_calls = len(provider.calls)
+    assert initial_calls > 0 and all(call.get('max_tokens') == 48_000 for call in provider.calls), 'All stages must inherit the fixture model default'
     if env.get('IMAGE_UI_ONLY'):
         assert provider.image_calls == 3, f'Expected 2 first attempts + 1 explicit retry, got {provider.image_calls}'
     run(restart=True)
