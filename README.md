@@ -2,11 +2,11 @@
 
 本地优先的 DeepSeek Harness 资料库插件。把网页、文字、文件和视频字幕保存到自己的电脑，按分类与专题整理，再让 Agent 检索、引用并形成知识笔记。
 
-[npm](https://www.npmjs.com/package/dsh-knowledge-library) · [下载 v0.2.0](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/tag/v0.2.0) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Alan-dong-dong/dsh-knowledge-library/issues) · [MIT](LICENSE)
+[npm](https://www.npmjs.com/package/dsh-knowledge-library) · [下载 v0.3.0](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/tag/v0.3.0) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Alan-dong-dong/dsh-knowledge-library/issues) · [MIT](LICENSE)
 
 这是社区插件，与 DeepSeek 官方没有隶属关系。插件已声明 dsh 原生加载配置，通过 `dsh plugin add` 安装后自动加载，无需另行注册账号或申请插件 ID。插件通过 npm 和 GitHub Release 分发；发布到 npm 不代表已收录进官方或第三方插件目录。
 
-`main` 已加入网页正文图片识别和知识整理输出预算修复，尚未发布 npm；下方 npm / Release 安装命令仍为 `0.2.0`。体验新功能请从源码构建后安装本地插件。
+`0.3.0` 新增网页正文图片识别，知识整理和识图的输出额度统一沿用当前模型配置，不另设 token 上限。下方 npm / Release 命令均安装此版本。
 
 **兼容基线：DeepSeek Harness `0.2.1-rc.2`、Cordis `4.0.5`、Node.js `22.23.0`。**
 使用 Node 内置 SQLite，最低要求 Node `22.13.0`。DSH 仍处于预览阶段，其他版本需要重新验证。原生界面已针对 **本机 DSH Web** 验证；桌面发行版、远程部署尚未验证，不能直接视为兼容。
@@ -15,6 +15,7 @@
 
 - dsh 原生侧栏「资料库」，跟随宿主深浅主题、字体与按钮样式，支持窄窗口阅读。
 - 网页正文提取、原始 HTML 保存、来源地址与作者记录。
+- 可选的网页正文图片识别，保留原图、图中文字、图示解读及来源，参与搜索与知识整理。
 - 文本 / Markdown 收集；UTF-8 文本、HTML、SRT、VTT 文件导入。
 - 视频、音频、PDF 等文件原样归档，并明确标记「仅归档」。
 - 分类对应本地目录；标签与专题用于跨分类组织。
@@ -41,7 +42,7 @@
 先安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，确保终端可以运行 `dsh`。在 PowerShell 或其他终端执行下面这条命令，从 npm 下载并安装**已经构建好的**插件，不需要克隆源码、安装 GitHub CLI 或注册 npm 账号：
 
 ```powershell
-dsh plugin --profile web add dsh-knowledge-library@0.2.0 --registry=https://registry.npmjs.org/
+dsh plugin --profile web add dsh-knowledge-library@0.3.0 --registry=https://registry.npmjs.org/
 ```
 
 重启 DSH Web，再在浏览器中按 `Ctrl+Shift+R` 刷新，点击侧栏 **资料库**。界面与 Agent 工具共享同一份本地资料。示例安装到 `web` profile；如果你实际使用其他 profile，请先确认宿主版本与界面兼容性后替换。已验证的宿主为 `0.2.1-rc.2`。
@@ -49,15 +50,15 @@ dsh plugin --profile web add dsh-knowledge-library@0.2.0 --registry=https://regi
 也可以安装 GitHub Release 中的同一版本：
 
 ```powershell
-dsh plugin --profile web add "https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/download/v0.2.0/dsh-knowledge-library-0.2.0.tgz" --registry=https://registry.npmjs.org/
+dsh plugin --profile web add "https://github.com/Alan-dong-dong/dsh-knowledge-library/releases/download/v0.3.0/dsh-knowledge-library-0.3.0.tgz" --registry=https://registry.npmjs.org/
 ```
 
 如果终端无法直接下载 GitHub 地址，可以从 [Releases](https://github.com/Alan-dong-dong/dsh-knowledge-library/releases) 下载 `.tgz` 与 `SHA256SUMS`，然后安装本地包：
 
 ```powershell
 # 将输出与 SHA256SUMS 中的值比较。
-Get-FileHash 'D:/下载/dsh-knowledge-library-0.2.0.tgz' -Algorithm SHA256
-dsh plugin --profile web add "D:/完整路径/dsh-knowledge-library-0.2.0.tgz"
+Get-FileHash 'D:/下载/dsh-knowledge-library-0.3.0.tgz' -Algorithm SHA256
+dsh plugin --profile web add "D:/完整路径/dsh-knowledge-library-0.3.0.tgz"
 ```
 
 安装过程中仍需从 npm 下载运行依赖。插件包含 `dsh.bundle.patch` 配置和符合 dsh lazy-CJS 协议的客户端入口。更新时将安装命令中的版本号替换为新版本，或安装新 Release 的版本化 `.tgz` 地址，再重启宿主。卸载可执行 `dsh plugin --profile web remove dsh-knowledge-library`；已保存的资料保留在独立资料目录。
@@ -167,7 +168,7 @@ npm start
 
 在 **回收站 → 清空回收站** 核对总数量，再点击 **永久清空**，会永久删除整个回收站的正文、原始附件和索引，无法恢复；当前搜索或类型筛选不会缩小清空范围。确认期间内容变化需要重新确认。相关笔记正文保留，失效引用标记为“来源已永久删除”，笔记仍可导出。遇到部分文件占用等失败会报告结果和待清理数量，可再次清空重试；重启也会继续处理此前已明确确认的文件清理。未删除的资料不受影响。
 
-## 网页正文图片识别（main，尚未发布 npm）
+## 网页正文图片识别（0.3.0 起）
 
 1. 在 Harness 中选择声明支持图片输入的默认模型，例如 `deepseek-flash`；插件从宿主模型信息核对能力，不根据名称猜测。
 2. 打开 **资料库设置 → 正文图片识别**，开启自动识别，选择每页上限（默认 6 张，最多 10 张），核对模型和费用说明，勾选确认并保存。设置按资料库持久化，无需重启。仅对后续网页链接采集生效。
@@ -184,7 +185,7 @@ npm start
 
 ## 将资料整理为知识笔记
 
-`main` 中的知识整理和网页识图均**沿用当前模型的默认输出配置，不另设 token 上限**。Harness 请求不传 `maxTokens`，由运行时采用模型适配器的配置；独立预览请求不传 `max_tokens`，采用模型服务的默认配置。继续使用默认模型与思考强度。模型或服务自身仍有输出和上下文限制，插件不会把这些限制扩大或改写为猜测的模型最大值。
+从 `0.3.0` 起，知识整理和网页识图均**沿用当前模型的默认输出配置，不另设 token 上限**。Harness 请求不传 `maxTokens`，由运行时采用模型适配器的配置；独立预览请求不传 `max_tokens`，采用模型服务的默认配置。继续使用默认模型与思考强度。模型或服务自身仍有输出和上下文限制，插件不会把这些限制扩大或改写为猜测的模型最大值。
 
 原来的 2500 tokens 及后续按阶段设置的固定额度均已移除。提炼/分析每次最多等待 5 分钟，分组/综合/对比最多 10 分钟，可随时取消。开始窗口可展开查看 **输出配置与思考**；模型截断时部分结果不生成草稿，不自动重试。思考可能与正文共用模型额度，费用按服务规则计算。摘要篇幅、结构校验、响应字节和任务资源保护仍保留，与模型的 token 配置分别处理。
 
@@ -284,7 +285,7 @@ DSH-Knowledge-Library/
 
 ## 当前边界
 
-- 网络视频平台自动下载、音视频自动转写、关键帧分析、PDF 文本提取和文件 OCR 未接入。网页正文图片识别已在 `main` 提供，可以先导入其他格式原文件与外部生成的字幕。
+- 网络视频平台自动下载、音视频自动转写、关键帧分析、PDF 文本提取和文件 OCR 未接入。网页正文图片识别从 `0.3.0` 起提供，可以先导入其他格式原文件与外部生成的字幕。
 - 网页采集适用于直接可访问的文章；登录页、反爬或复杂动态页面请复制文本，或导入保存的 HTML。
 - 网页正文和原始 HTML 会保存；开启图片识别后，受数量及大小限制的正文原图与识别补充文字也会保存，不保证原网页完整离线还原。
 - 网页最多 6 MB，文本最多 200 万字符，单个文件最多 64 MB。
