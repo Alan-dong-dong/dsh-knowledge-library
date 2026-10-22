@@ -166,6 +166,62 @@ test('body-only invented references and model changes cannot become a valid know
   } finally { await f.cleanup(); }
 });
 
+test('valid citations survive common Markdown delimiters without another model call', async () => {
+  const f = fixture();
+  try {
+    const source = f.sources[0]; const url = `library://${source.id}/${source.segments[0].id}`;
+    const formats = ['`' + url + '`', '"' + url + '"', "'" + url + "'", `“${url}”`, `「${url}」`, `[来源](${url} "出处")`, `<${url}>`, `${url}：适用条件`];
+    for (const [i, content] of formats.entries()) {
+      f.setGenerate(async () => JSON.stringify({ ...JSON.parse(response(f.sources)), content }));
+      const job = f.knowledge.add([source.id], `Markdown ${i}`); await f.knowledge.idle();
+      assert.equal(f.knowledge.get(job.id).status, 'draft', f.knowledge.get(job.id).error);
+      assert.equal(f.knowledge.get(job.id).draft!.content, content);
+      f.knowledge.discard(job.id);
+    }
+    assert.equal(f.requests.length, formats.length);
+  } finally { await f.cleanup(); }
+});
+
+test('verified body citations fill missing list entries, without guessing unknown IDs or accepting suffixes', async () => {
+  const f = fixture();
+  try {
+    const source = f.library.captureText('第一条证据。\n\n第二条证据。').material; f.setSources([source]);
+    const urls = source.segments.map(s => `library://${source.id}/${s.id}`);
+    f.setGenerate(async () => JSON.stringify({ ...JSON.parse(response(f.sources)), content: urls.map(url => '`' + url + '`').join('\n') }));
+    const job = f.knowledge.add([source.id]); await f.knowledge.idle();
+    assert.equal(f.knowledge.get(job.id).status, 'draft', f.knowledge.get(job.id).error);
+    assert.deepEqual(f.knowledge.get(job.id).draft!.citations.map(c => c.segmentId), source.segments.map(s => s.id));
+    f.knowledge.discard(job.id);
+    f.setGenerate(async () => JSON.stringify({ ...JSON.parse(response(f.sources)), content: urls[0], citations: [] }));
+    const bodyOnly = f.knowledge.add([source.id]); await f.knowledge.idle();
+    assert.equal(f.knowledge.get(bodyOnly.id).status, 'draft', f.knowledge.get(bodyOnly.id).error); f.knowledge.discard(bodyOnly.id);
+    const foreign = f.library.captureText('另一篇未选择的来源。').material;
+    for (const invalid of [urls[0] + 'typo', urls[0] + '?other=p0002', `library://${source.id}/p9999`, `library://${foreign.id}/p0001`, 'library://UNKNOWN/p0001', 'library://']) {
+      f.setGenerate(async () => JSON.stringify({ ...JSON.parse(response(f.sources)), content: '`' + invalid + '`' }));
+      const failed = f.knowledge.add([source.id]); await f.knowledge.idle();
+      assert.equal(f.knowledge.get(failed.id).status, 'failed', invalid);
+      assert.match(f.knowledge.get(failed.id).error!, /无法核验/);
+    }
+    assert.equal(f.library.stats().notes, 0);
+  } finally { await f.cleanup(); }
+});
+
+test('body citation merging still requires every selected source and respects the final citation count', async () => {
+  const f = fixture();
+  try {
+    f.setSources([...f.sources, f.library.captureText('第二篇资料的证据。').material]);
+    f.setGenerate(async () => JSON.stringify({ ...JSON.parse(response(f.sources)), content: `library://${f.sources[0].id}/p0001`, citations: [] }));
+    const uncovered = f.knowledge.add(f.sources.map(s => s.id), '', 'compose'); await f.knowledge.idle();
+    assert.match(f.knowledge.get(uncovered.id).error!, /未覆盖全部/);
+    const many = f.library.captureText(Array.from({ length: 201 }, (_, i) => `第${i}条证据。`).join('\n\n')).material;
+    f.setSources([many]);
+    f.setGenerate(async request => request.prompt.includes('不超过1500字') ? '分段提炼' : JSON.stringify({ ...JSON.parse(response([many])), citations: [], content: many.segments.map(s => `library://${many.id}/${s.id}`).join('\n') }));
+    const overflow = f.knowledge.add([many.id]); await f.knowledge.idle();
+    assert.match(f.knowledge.get(overflow.id).error!, /引用超过200条/);
+    assert.equal(f.library.stats().notes, 0);
+  } finally { await f.cleanup(); }
+});
+
 test('restart marks interrupted calls failed without spending model calls; an already-written note repairs confirmation state', async () => {
   const f = fixture();
   try {
@@ -269,6 +325,58 @@ test('a job cannot silently dispatch to a different default model', async () => 
   const model = harnessKnowledgeModel({ get: (name: keyof typeof services) => services[name] } as any);
   await assert.rejects(model.generate({ system: 'rules', prompt: 'text', expectedModel: 'test / first', signal: new AbortController().signal }), /模型已改变/);
   assert.equal(calls, 0);
+});
+
+test('Harness failure reasons remain actionable without exposing provider details or retrying', async () => {
+  let calls = 0; let reason: any; let thrown: any; let tool = false; let missingFinish = false;
+  const secret = 'private-secret https://private.example/?token=secret';
+  const services = {
+    llm: { listProviders: () => [{ id: 'test' }], async *stream(options: any) {
+      calls++; assert.equal(options.model, 'fixture'); assert.equal(options.reasoningEffort, 'max');
+      assert.equal(Object.hasOwn(options, 'maxTokens'), false); assert.equal(options.tools, undefined);
+      yield { type: 'block-end', block: { type: 'text', text: '不得保存的部分正文' } };
+      if (tool) yield { type: 'block-end', block: { type: 'tool-call', name: secret, arguments: secret } };
+      if (thrown) throw thrown;
+      if (!missingFinish) yield { type: 'finish', reason };
+    } },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: 'fixture', reasoningEffort: 'max' }) },
+  };
+  const model = harnessKnowledgeModel({ get: (name: keyof typeof services) => services[name] } as any);
+  const request = { system: '规则', prompt: '资料', signal: new AbortController().signal };
+  const cases: Array<[any, RegExp]> = [
+    [{ kind: 'error', failure: { code: 'CONTEXT_WINDOW_EXCEEDED', status: 400 } }, /上下文容量不足.*HTTP 400/],
+    [{ kind: 'error', failure: { code: 'QUOTA', status: 429 } }, /额度或余额不足/],
+    [{ kind: 'error', failure: { code: 'ACCOUNT_QUOTA' } }, /账户额度不足/],
+    [{ kind: 'error', failure: { code: 'EMPTY_RESPONSE' } }, /空响应/],
+    [{ kind: 'error', failure: { code: 'INVALID_CREDENTIAL' } }, /凭据无效/],
+    [{ kind: 'error', failure: { code: 'MISSING_CREDENTIAL' } }, /缺少模型凭据/],
+    [{ kind: 'error', failure: { code: 'RATE_LIMIT', status: 429 } }, /请求频率受限.*HTTP 429/],
+    [{ kind: 'error', failure: { code: secret, status: 503 } }, /服务暂时不可用.*HTTP 503/],
+    [{ kind: 'error', failure: { code: secret, status: 401 } }, /认证或访问.*HTTP 401/],
+    [{ kind: 'aborted', failure: { code: secret } }, /被中断/],
+    [{ kind: 'error', failure: { code: secret, status: secret } }, /模型服务返回错误/],
+    [{ kind: 'tool-calls' }, /未执行工具/],
+    [{ kind: secret }, /未识别的结束状态/],
+  ];
+  for (const [value, expected] of cases) {
+    reason = value.failure ? { ...value, failure: { ...value.failure, message: secret } } : value;
+    const before = calls;
+    await assert.rejects(model.generate(request), error => {
+      assert.match((error as Error).message, expected); assert.doesNotMatch((error as Error).message, /private|token=|部分正文/); return true;
+    });
+    assert.equal(calls, before + 1);
+  }
+  thrown = Object.assign(new Error(secret), { code: 'RATE_LIMIT', status: 429 });
+  await assert.rejects(model.generate(request), /请求频率受限.*HTTP 429/);
+  thrown = new Error(secret);
+  await assert.rejects(model.generate(request), error => { assert.match((error as Error).message, /模型调用失败/); assert.doesNotMatch((error as Error).message, /private|secret/); return true; });
+  thrown = undefined; reason = { kind: 'stop' }; tool = true;
+  await assert.rejects(model.generate(request), /未执行工具/);
+  tool = false; missingFinish = true;
+  await assert.rejects(model.generate(request), /没有返回完整正文/);
+  const controller = new AbortController(); controller.abort(); const before = calls;
+  await assert.rejects(model.generate({ ...request, signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(calls, before);
 });
 
 test('text generation does not depend on a separate output-capacity lookup', async () => {

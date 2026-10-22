@@ -49,7 +49,7 @@ function fixture() {
     },
   };
   let queue = new KnowledgeQueue(library, model);
-  return { root, sources, requests, get library() { return library; }, get queue() { return queue; }, get calls() { return calls; }, bad(value: typeof bad) { bad = value; },
+  return { root, sources, requests, model, get library() { return library; }, get queue() { return queue; }, get calls() { return calls; }, bad(value: typeof bad) { bad = value; },
     async plan() { const job = queue.add(sources.map(s => s.id)); await queue.idle(); return queue.get(job.id); },
     async reopen(before?: () => void) { await queue.close(); library.close(); before?.(); library = new Library(root); queue = new KnowledgeQueue(library, model); },
     async cleanup() { await queue.close(); library.close(); assert.ok(root.startsWith(join(tmpdir(), 'dsh-grouping-test-'))); rmSync(root, { recursive: true, force: true }); },
@@ -84,6 +84,37 @@ test('heterogeneous input is analyzed individually, partitioned conservatively, 
     const beforeCalls = f.calls; await f.reopen();
     assert.equal(f.queue.get(job.id).children!.length, 2); assert.equal(f.calls, beforeCalls);
     assert.equal(f.queue.overview().states[f.sources[0].id].status, 'completed');
+  } finally { await f.cleanup(); }
+});
+
+test('confirmed classification generates and saves child notes with Markdown-wrapped body citations', async () => {
+  const f = fixture();
+  try {
+    const original = f.model.generate.bind(f.model);
+    f.model.generate = async request => {
+      const output = await original(request);
+      if (request.prompt.includes('任务：')) return output;
+      const data = JSON.parse(output);
+      data.content += '\n' + data.citations.map((c: any) => '`library://' + c.materialId + '/' + c.segmentId + '`').join('\n');
+      data.citations = [];
+      return JSON.stringify(data);
+    };
+    const parent = await f.plan(); const grouped = f.queue.confirmPlan(parent.id, 1, true);
+    await f.queue.idle();
+    for (const child of grouped.children!) {
+      const job = f.queue.get(child.jobId); assert.equal(job.status, 'draft', job.error);
+      assert.equal(job.draft!.citations.length, job.sourceIds.length);
+      const note = f.queue.confirm(job.id, 1).material;
+      for (const id of job.sourceIds) {
+        const source = f.library.get(id);
+        assert.notEqual(source.category, '收件箱'); assert.ok(existsSync(source.path));
+        assert.equal(source.content, f.sources.find(s => s.id === id)!.content);
+        assert.ok(note.citations.some(c => c.materialId === id && source.segments.some(s => s.id === c.segmentId)));
+      }
+    }
+    assert.equal(f.calls, 7, 'classification and child drafts must not need repair calls');
+    assert.equal(f.library.stats().notes, 2);
+    await f.reopen(); assert.equal(f.calls, 7); assert.equal(f.library.stats().notes, 2);
   } finally { await f.cleanup(); }
 });
 

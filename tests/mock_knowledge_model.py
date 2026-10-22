@@ -53,7 +53,7 @@ class ModelHandler(BaseHTTPRequestHandler):
             sources = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))
             target = next((item for item in candidates if '增量主题' in item['title']), None)
             action = 'duplicate' if target and any('增量重复' in s['title'] for s in sources) else 'append' if target else 'new'
-            refs = '\n'.join('library://' + s['materialId'] + '/' + s['segmentIds'][0] for s in sources)
+            refs = '\n'.join('“library://' + s['materialId'] + '/' + s['segmentIds'][0] + '”' for s in sources)
             content = json.dumps({'action': action, 'noteId': target['id'] if target else '', 'reason': '新增证据补充相同问题的适用条件' if target else '本次独立主题，建议新建', 'overlaps': ['均讨论来源核验'] if target else [], 'additions': ['补充失败恢复的边界条件'] if action == 'append' else [], 'conflicts': ['失败恢复仍需根据具体场景核实'] if target else [], 'content': ('## 新增方法\n设置恢复边界并记录证据。\n\n## 条件与待核实\n仅适用于本次来源；需验证其他环境。\n' + refs) if action == 'append' else ''}, ensure_ascii=False)
         elif '任务：逐篇分析' in prompt:
             source = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))[0]
@@ -80,11 +80,13 @@ class ModelHandler(BaseHTTPRequestHandler):
         else:
             sources = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))
             citations = [{'materialId': source['materialId'], 'segmentId': next((s for s in source['segmentIds'] if s.startswith('v_')), source['segmentIds'][0])} for source in sources]
-            refs = '\n'.join('library://' + c['materialId'] + '/' + c['segmentId'] for c in citations)
+            # Exercise Markdown URI boundaries and deterministic list completion
+            # through both the actual HTTP protocol and Harness LlmRuntime.
+            refs = '\n'.join('`library://' + c['materialId'] + '/' + c['segmentId'] + '`' for c in citations)
             content = json.dumps({
                 'title': '从资料到可复用知识',
                 'content': '## 核心观点\n知识整理应保留证据和来源。\n\n## 关键概念\n资料是输入，知识笔记记录理解。\n\n## 可复用方法\n先采集，再核验，最后归纳。\n\n## 适用条件与局限\n结论仅适用于所选资料的情境。\n\n## 待验证问题\n其他主题是否适用？\n\n## 共识与差异\n共同强调证据；具体应用条件需核实。\n\n' + refs,
-                'tags': ['知识管理', '证据'], 'citations': citations,
+                'tags': ['知识管理', '证据'], 'citations': [],
             }, ensure_ascii=False)
         payload = json.dumps({'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': content}}]}, ensure_ascii=False).encode('utf-8')
         self.send_response(200)

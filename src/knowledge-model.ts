@@ -15,6 +15,29 @@ class ModelResponseError extends Error {}
 function outputLimitMessage() {
   return '模型输出达到当前模型或服务的长度上限。插件沿用模型默认输出配置，未另设 token 上限；思考可能与正文共用额度，本次未自动重试。请检查模型配置，或分批整理后主动重试。';
 }
+function failureMessage(value: unknown, fallback: string): string {
+  // Only expose known classifications and numeric HTTP status, never provider
+  // messages, URLs, bodies or arbitrary codes that may contain credentials.
+  const failure = value && typeof value === 'object' ? value as { code?: unknown; status?: unknown } : {};
+  const reasons: Record<string, string> = {
+    CONTEXT_WINDOW_EXCEEDED: '模型上下文容量不足，请减少本次所选资料后主动重试',
+    QUOTA: '模型账户额度或余额不足，请检查服务商账户',
+    ACCOUNT_QUOTA: '模型账户额度不足，请在 Harness 中检查账户额度',
+    EMPTY_RESPONSE: '模型服务返回空响应，请稍后主动重试',
+    INVALID_CREDENTIAL: '模型凭据无效，请检查 Harness 模型认证设置',
+    MISSING_CREDENTIAL: '缺少模型凭据，请在 Harness 中配置模型认证',
+    RATE_LIMIT: '模型服务请求频率受限，请稍后主动重试',
+  };
+  const status = typeof failure.status === 'number' && Number.isInteger(failure.status) && failure.status >= 400 && failure.status <= 599 ? failure.status : undefined;
+  const known = typeof failure.code === 'string' && Object.hasOwn(reasons, failure.code) ? reasons[failure.code] : undefined;
+  const reason = known || (status === 401 || status === 403 ? '模型服务拒绝认证或访问，请检查模型凭据及权限'
+    : status === 402 ? '模型服务要求补充账户额度，请检查服务商账户'
+    : status === 429 ? '模型服务请求频率或额度受限，请稍后重试并检查账户额度'
+    : status !== undefined && status >= 500 ? '模型服务暂时不可用，请稍后主动重试'
+    : fallback);
+  return `${reason}${status === undefined ? '' : `（HTTP ${status}）`}；本次未自动重试。`;
+}
+const toolCallMessage = '模型返回了工具调用，未形成完整知识正文。请检查模型配置后主动重试；插件未执行工具，也未自动重试。';
 async function boundedJson(response: Response, limit = 512_000): Promise<any> {
   const reader = response.body?.getReader(); if (!reader) throw new Error('模型响应为空');
   const chunks: Uint8Array[] = []; let length = 0;
@@ -70,15 +93,19 @@ export function harnessKnowledgeModel(ctx: Context): KnowledgeModel {
         signal.throwIfAborted();
         // Complete blocks are authoritative; deltas may include reasoning or retries.
         if (chunk.type === 'block-end' && chunk.block.type === 'text') text += chunk.block.text;
+        if (chunk.type === 'block-end' && chunk.block.type === 'tool-call') throw new ModelResponseError(toolCallMessage);
         if (text.length > 60_000) throw new ModelResponseError('模型输出过长，请缩小整理范围');
         if (chunk.type === 'finish') {
-          if (chunk.reason.kind !== 'stop') throw new ModelResponseError(chunk.reason.kind === 'max-tokens' ? outputLimitMessage() : '模型调用未完成，请检查 Harness 模型设置后重试');
+          if (chunk.reason.kind === 'max-tokens') throw new ModelResponseError(outputLimitMessage());
+          if (chunk.reason.kind === 'tool-calls') throw new ModelResponseError(toolCallMessage);
+          if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') throw new ModelResponseError(failureMessage(chunk.reason.failure, chunk.reason.kind === 'aborted' ? '模型调用被中断，未返回完整正文，请检查服务连接后主动重试' : '模型服务返回错误，请检查 Harness 模型配置或网络后主动重试'));
+          if (chunk.reason.kind !== 'stop') throw new ModelResponseError('模型返回未识别的结束状态，未保存不完整正文；请检查 Harness 模型配置后主动重试。');
           finished = true;
         }
       } } catch (error) {
         signal.throwIfAborted();
         if (error instanceof ModelResponseError) throw error;
-        throw new Error('模型调用失败，请检查 Harness 模型配置或网络后重试');
+        throw new Error(failureMessage(error, '模型调用失败，请检查 Harness 模型配置或网络后主动重试'));
       }
       signal.throwIfAborted();
       if (!finished || !text.trim()) throw new Error('模型没有返回完整正文，请重试');

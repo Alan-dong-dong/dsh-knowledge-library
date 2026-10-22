@@ -27,7 +27,7 @@ function fixture() {
     return JSON.stringify(draft);
   } };
   let queue = new KnowledgeQueue(library, model);
-  return { root, source, old, target, draft, prompts, get calls() { return calls; }, get library() { return library; }, get queue() { return queue; }, action(value: string) { action = value; }, bad(value: string) { bad = value; },
+  return { root, source, old, target, draft, prompts, model, get calls() { return calls; }, get library() { return library; }, get queue() { return queue; }, action(value: string) { action = value; }, bad(value: string) { bad = value; },
     async run() { const job = queue.add([source.id], 'Agent可靠性'); await queue.idle(); return queue.get(job.id); },
     async reopen(change?: () => void) { await queue.close(); library.close(); change?.(); library = new Library(root); queue = new KnowledgeQueue(library, model); },
     async cleanup() { await queue.close(); library.close(); assert.ok(root.startsWith(join(tmpdir(), 'dsh-incremental-'))); rmSync(root, { recursive: true, force: true }); } };
@@ -54,6 +54,26 @@ test('incremental comparison is read-only until confirmation; append retains ID,
     assert.equal(f.queue.overview().states[f.source.id].status, 'completed');
     const history = JSON.parse(readFileSync(join(saved.path, '.history', job.id + '.json'), 'utf8'));
     assert.equal(history.before.content, f.target.content); assert.equal(history.after.meta.revision, 2);
+  } finally { await f.cleanup(); }
+});
+
+test('append and edited additions retain verified body citations omitted from the original draft list', async () => {
+  const f = fixture();
+  try {
+    const source = f.library.captureText('Agent可靠性第一条。\n\nAgent可靠性第二条。\n\nAgent可靠性第三条。').material;
+    const ref = (index: number) => '`library://' + source.id + '/' + source.segments[index].id + '`';
+    f.model.generate = async request => request.prompt.includes('任务：增量知识对比')
+      ? JSON.stringify({ action: 'append', noteId: f.target.id, reason: '补充Agent可靠性', overlaps: [], additions: ['补充'], conflicts: [], content: ref(1) })
+      : JSON.stringify({ ...f.draft, content: 'Agent可靠性 ' + ref(0), citations: [{ materialId: source.id, segmentId: source.segments[0].id }] });
+    const pending = f.queue.add([source.id], 'Agent可靠性'); await f.queue.idle(); const job = f.queue.get(pending.id);
+    assert.equal(job.status, 'draft', job.error);
+    assert.deepEqual(job.draft!.citations.map(c => c.segmentId), source.segments.slice(0, 2).map(s => s.id));
+    const edited = f.queue.edit(job.id, job.draft, 1, { choice: 'append', content: job.integration!.content + '\n' + ref(2) });
+    assert.deepEqual(edited.draft!.citations.map(c => c.segmentId), source.segments.map(s => s.id));
+    const note = f.queue.confirm(job.id, edited.draftVersion).material;
+    assert.equal(note.id, f.target.id);
+    assert.deepEqual(note.citations.filter(c => c.materialId === source.id).map(c => c.segmentId), source.segments.map(s => s.id));
+    assert.ok(note.content.includes(ref(1)) && note.content.includes(ref(2)));
   } finally { await f.cleanup(); }
 });
 
