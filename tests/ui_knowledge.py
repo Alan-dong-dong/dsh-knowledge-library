@@ -69,6 +69,10 @@ with sync_playwright() as p:
     detail.get_by_role('button', name='生成知识笔记', exact=True).click()
     start = page.get_by_role('dialog', name='生成知识笔记', exact=True)
     expect(start.get_by_text('1 份来源资料', exact=True)).to_be_visible()
+    start.get_by_text('输出额度与思考', exact=True).click()
+    expect(start.get_by_text('每次提炼/分析最多', exact=False)).to_contain_text('16,384')
+    expect(start.get_by_text('每次提炼/分析最多', exact=False)).to_contain_text('32,768')
+    page.screenshot(path=str(out / (prefix + '-output-budget.png')), animations='disabled')
     start.get_by_role('button', name='取消', exact=True).click()
     assert not page.request.get(api + '/knowledge').json()['jobs']
     detail.get_by_role('button', name='生成知识笔记', exact=True).click()

@@ -62,6 +62,11 @@ test('batch generation covers long content including the end, and never silently
   try {
     const long = f.library.captureText('起始证据。\n\n' + '跨段内容需要完整处理。'.repeat(1800) + '\n\n末尾关键条件XYZ', { title: '长文' }).material;
     f.setSources([...f.sources, long]);
+    f.setGenerate(async request => {
+      assert.equal(request.expectedModel, 'test / isolated');
+      if (request.prompt.includes('不超过1500字')) { assert.ok(request.maxTokens >= 16_384, 'leave room for reasoning and summary output'); return `证据提炼 library://${f.sources[0].id}/p0001`; }
+      assert.ok(request.maxTokens >= 32_768); return response(f.sources);
+    });
     const job = f.knowledge.add(f.sources.map(s => s.id), '跨来源综合', 'compose');
     await f.knowledge.idle();
     assert.equal(f.knowledge.get(job.id).status, 'draft', f.knowledge.get(job.id).error);
@@ -200,7 +205,9 @@ test('knowledge HTTP routes enforce same-origin, current root, version and expli
 test('preview model uses the actual compatible HTTP protocol without exposing credentials or provider error bodies', async () => {
   let mode = 'success'; let count = 0;
   const server = createServer(async (req, res) => {
-    count++; assert.equal(req.url, '/v1/chat/completions'); assert.equal(req.headers.authorization, 'Bearer private-test-key');
+    assert.equal(req.headers.authorization, 'Bearer private-test-key');
+    if (req.url === '/v1/models') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'fixture-model', max_tokens: 4096 }] })); return; }
+    count++; assert.equal(req.url, '/v1/chat/completions');
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString()); assert.equal(body.model, 'fixture-model'); assert.equal(body.messages[0].role, 'system');
     res.setHeader('Content-Type', 'application/json');
@@ -229,4 +236,69 @@ test('Harness model adapter consumes completed text blocks and refuses incomplet
   const request = { system: '规则', prompt: '资料', maxTokens: 100, signal: new AbortController().signal };
   assert.equal(await model.generate(request), '正文');
   maxTokens = true; await assert.rejects(model.generate(request), /长度上限/);
+});
+
+test('Harness respects the adapter allowance and max reasoning, reports the real cutoff and never retries truncation', async () => {
+  let calls = 0; let truncated = false;
+  const services = {
+    llm: {
+      listProviders: () => [{ id: 'test' }],
+      resolveModelInfo: async () => ({ defaultMaxTokens: 8192 }),
+      async *stream(options: any) {
+        calls++; assert.equal(options.maxTokens, 8192); assert.equal(options.reasoningEffort, 'max');
+        assert.equal(options.provider, 'test'); assert.equal(options.model, 'fixture');
+        yield { type: 'block-end', block: { type: 'text', text: '有界正文' } };
+        yield { type: 'finish', reason: { kind: truncated ? 'max-tokens' : 'stop' } };
+      },
+    },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: 'fixture', reasoningEffort: 'max' }) },
+  };
+  const model = harnessKnowledgeModel({ get: (name: keyof typeof services) => services[name] } as any);
+  const request = { system: '规则', prompt: '资料', maxTokens: 32_768, expectedModel: 'test / fixture', signal: new AbortController().signal };
+  assert.equal(await model.generate(request), '有界正文');
+  truncated = true; await assert.rejects(model.generate(request), /8192 tokens.*未自动重试/); assert.equal(calls, 2);
+});
+
+test('async model metadata cannot silently change the selected model before dispatch', async () => {
+  let selected = 'first'; let calls = 0;
+  const services = {
+    llm: { listProviders: () => [{ id: 'test' }], resolveModelInfo: async () => { selected = 'changed'; return { defaultMaxTokens: 16384 }; }, async *stream() { calls++; } },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: selected }) },
+  };
+  const model = harnessKnowledgeModel({ get: (name: keyof typeof services) => services[name] } as any);
+  await assert.rejects(model.generate({ system: 'rules', prompt: 'text', maxTokens: 16384, expectedModel: 'test / first', signal: new AbortController().signal }), /模型配置已改变/);
+  assert.equal(calls, 0);
+});
+
+test('unknown capacity preserves the stage budget; a failed capacity lookup dispatches no inference or private error detail', async () => {
+  let fail = false; let calls = 0;
+  const services = {
+    llm: { listProviders: () => [{ id: 'test' }], resolveModelInfo: async () => { if (fail) throw new Error('private-provider-detail'); return {}; }, async *stream(options: any) { calls++; assert.equal(options.maxTokens, 16384); yield { type: 'block-end', block: { type: 'text', text: '完整正文' } }; yield { type: 'finish', reason: { kind: 'stop' } }; } },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: 'fixture' }) },
+  };
+  const model = harnessKnowledgeModel({ get: (name: keyof typeof services) => services[name] } as any);
+  const request = { system: 'rules', prompt: 'text', maxTokens: 16384, signal: new AbortController().signal };
+  assert.equal(await model.generate(request), '完整正文'); fail = true;
+  await assert.rejects(model.generate(request), error => { assert.match((error as Error).message, /输出额度/); assert.doesNotMatch((error as Error).message, /private-provider-detail/); return true; });
+  assert.equal(calls, 1);
+});
+
+test('preview observes disclosed output capacity and rejects partial text without a second completion request', async () => {
+  const budgets: number[] = []; let cap: number | undefined = 8192; let truncated = false;
+  const server = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/v1/models') { res.end(JSON.stringify({ data: [{ id: 'fixture', ...(cap ? { max_tokens: cap } : {}) }] })); return; }
+    const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
+    const request = JSON.parse(Buffer.concat(chunks).toString()); budgets.push(request.max_tokens);
+    res.end(JSON.stringify({ choices: [{ finish_reason: truncated ? 'length' : 'stop', message: { content: truncated ? '不完整正文' : '完整正文' } }] }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const env = { KNOWLEDGE_LIBRARY_MODEL_API_KEY: 'isolated-key', KNOWLEDGE_LIBRARY_MODEL: 'fixture', KNOWLEDGE_LIBRARY_MODEL_BASE_URL: `http://127.0.0.1:${(server.address() as any).port}/v1` };
+  const request = { system: 'rules', prompt: 'text', maxTokens: 32_768, signal: new AbortController().signal };
+  try {
+    const model = previewKnowledgeModel(env);
+    assert.equal(await model.generate(request), '完整正文'); truncated = true;
+    await assert.rejects(model.generate(request), /8192 tokens.*未自动重试/); assert.deepEqual(budgets, [8192, 8192]);
+    cap = undefined; truncated = false; assert.equal(await previewKnowledgeModel(env).generate(request), '完整正文'); assert.equal(budgets[2], 32_768, 'unknown metadata must not invent a smaller cap');
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

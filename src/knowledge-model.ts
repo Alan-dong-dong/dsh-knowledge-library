@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ImageBlock, LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';
 import type { AttachmentStore, ImageMediaType } from '@deepseek-ai/dsh-attachment';
 import type { AgentDefaultModelConfig } from '@deepseek-ai/dsh-agent-default-model';
+import { boundedOutputTokens, outputLimitMessage } from './model-budget.js';
 
 export interface ModelRequest { system: string; prompt: string; maxTokens: number; signal: AbortSignal; expectedModel?: string; images?: Array<{ data: Uint8Array; mediaType: ImageMediaType; name?: string }> }
 export interface VisionStatus { available: boolean; model?: string; reason?: string }
@@ -51,16 +52,24 @@ export function harnessKnowledgeModel(ctx: Context): KnowledgeModel {
       const { llm, selection } = services();
       if (expectedModel !== undefined && expectedModel !== `${selection.provider} / ${selection.model}`) throw new Error('模型已改变，请重新核对');
       signal.throwIfAborted();
+      if (typeof llm.resolveModelInfo === 'function') {
+        let info;
+        try { info = await llm.resolveModelInfo(selection.provider, selection.model, AbortSignal.any([signal, AbortSignal.timeout(5000)])); }
+        catch { signal.throwIfAborted(); throw new Error('无法读取当前模型的输出额度，请检查 Harness 模型配置后重试'); }
+        // This is the adapter/user configured allowance, not an inferred model limit.
+        maxTokens = boundedOutputTokens(maxTokens, info.defaultMaxTokens);
+      } else maxTokens = boundedOutputTokens(maxTokens);
+      signal.throwIfAborted();
       const content: Array<TextBlock | ImageBlock> = [{ type: 'text', text: prompt }];
       if (images?.length) {
         const status = await visionStatus(); signal.throwIfAborted();
         if (!status.available || status.model !== `${selection.provider} / ${selection.model}`) throw new Error(status.reason || '图片模型配置已改变');
         const attachments = ctx.get('attachments') as AttachmentStore;
         const refs = await attachments.saveImages(images); signal.throwIfAborted();
-        const current = services().selection;
-        if (current.provider !== selection.provider || current.model !== selection.model) throw new Error('图片模型配置已改变，请重新核对');
         content.push(...refs.map(attachment => ({ type: 'image' as const, attachment })));
       }
+      const current = services().selection;
+      if (current.provider !== selection.provider || current.model !== selection.model || current.reasoningEffort !== selection.reasoningEffort) throw new Error('模型配置已改变，请重新核对');
       let text = ''; let finished = false;
       try { for await (const chunk of llm.stream({ ...selection, system, messages: [{ role: 'user', content }], maxTokens, signal })) {
         signal.throwIfAborted();
@@ -68,7 +77,7 @@ export function harnessKnowledgeModel(ctx: Context): KnowledgeModel {
         if (chunk.type === 'block-end' && chunk.block.type === 'text') text += chunk.block.text;
         if (text.length > 60_000) throw new ModelResponseError('模型输出过长，请缩小整理范围');
         if (chunk.type === 'finish') {
-          if (chunk.reason.kind !== 'stop') throw new ModelResponseError(chunk.reason.kind === 'max-tokens' ? '模型输出达到长度上限，请缩小整理范围后重试' : '模型调用未完成，请检查 Harness 模型设置后重试');
+          if (chunk.reason.kind !== 'stop') throw new ModelResponseError(chunk.reason.kind === 'max-tokens' ? outputLimitMessage(maxTokens) : '模型调用未完成，请检查 Harness 模型设置后重试');
           finished = true;
         }
       } } catch (error) {
@@ -88,16 +97,18 @@ export function previewKnowledgeModel(env: NodeJS.ProcessEnv = process.env): Kno
   const key = env.KNOWLEDGE_LIBRARY_MODEL_API_KEY || env.DEEPSEEK_API_KEY;
   const model = env.KNOWLEDGE_LIBRARY_MODEL || 'deepseek-chat';
   const base = env.KNOWLEDGE_LIBRARY_MODEL_BASE_URL || 'https://api.deepseek.com';
-  let cached: { time: number; value: VisionStatus } | undefined;
-  async function visionStatus(): Promise<VisionStatus> {
+  let cached: { time: number; value: VisionStatus & { maxTokens?: number } } | undefined;
+  async function visionStatus(): Promise<VisionStatus & { maxTokens?: number }> {
     if (!key) return { available: false, model, reason: unavailable };
     if (cached && Date.now() - cached.time < 15_000) return cached.value;
-    let value: VisionStatus;
+    let value: VisionStatus & { maxTokens?: number };
     try {
       const response = await fetch(`${base.replace(/\/$/, '')}/models`, { headers: { Authorization: `Bearer ${key}` }, redirect: 'error', signal: AbortSignal.timeout(5000) });
       if (!response.ok) { await response.body?.cancel(); throw new Error(); }
       const data = await boundedJson(response); const entry = Array.isArray(data.data) && data.data.find((item: any) => item.id === model);
       value = entry?.input_modalities?.includes('image') ? { available: true, model } : { available: false, model, reason: '当前模型未声明图片输入能力，请设置支持视觉的 KNOWLEDGE_LIBRARY_MODEL（如 deepseek-flash）' };
+      // Match the endpoint's disclosed max_tokens; absent/invalid capacities stay unknown.
+      if (typeof entry?.max_tokens === 'number' && Number.isSafeInteger(entry.max_tokens) && entry.max_tokens > 0) value.maxTokens = entry.max_tokens;
     } catch { value = { available: false, model, reason: '无法读取模型图片能力，请检查服务地址的 /models 接口和网络' }; }
     cached = { time: Date.now(), value }; return value;
   }
@@ -108,7 +119,9 @@ export function previewKnowledgeModel(env: NodeJS.ProcessEnv = process.env): Kno
       checkImages(images);
       if (!key) throw new Error(unavailable);
       if (expectedModel !== undefined && expectedModel !== model) throw new Error('模型已改变，请重新核对');
-      if (images?.length) { const status = await visionStatus(); signal.throwIfAborted(); if (!status.available) throw new Error(status.reason); }
+      const info = await visionStatus(); signal.throwIfAborted();
+      maxTokens = boundedOutputTokens(maxTokens, info.maxTokens);
+      if (images?.length && !info.available) throw new Error(info.reason);
       let response: Response;
       try {
         const url = new URL(`${base.replace(/\/$/, '')}/chat/completions`);
@@ -122,6 +135,7 @@ export function previewKnowledgeModel(env: NodeJS.ProcessEnv = process.env): Kno
       if (!response.ok) { await response.body?.cancel(); throw new Error(`模型调用失败（HTTP ${response.status}），请检查模型配置或额度`); }
       const data = await boundedJson(response);
       const choice = data.choices?.[0];
+      if (choice?.finish_reason === 'length' || choice?.finish_reason === 'max_tokens') throw new Error(outputLimitMessage(maxTokens));
       if (choice?.finish_reason !== 'stop' || typeof choice.message?.content !== 'string' || !choice.message.content.trim()) throw new Error('模型未返回完整正文，可能达到输出上限，请缩小范围后重试');
       return choice.message.content;
     },
