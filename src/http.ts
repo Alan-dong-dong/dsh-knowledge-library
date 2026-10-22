@@ -46,6 +46,7 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       const path = url.pathname.slice(API_PATH.length);
       if (req.method === 'GET') {
         if (path === '/settings') { send(res, 200, { root: library.root, ...(directories?.status() ?? { canChange: false, canChangeNetwork: false, picker: null, allowProxyFakeIp: false }) }); return; }
+        if (path === '/settings/images') { send(res, 200, queue.imageCapture ? await queue.imageCapture.status() : { supported: false, available: false, enabled: false, maxImages: 6, version: 0, reason: '请重启服务以启用网页图片识别' }); return; }
         if (path === '/stats') { send(res, 200, library.stats()); return; }
         if (path === '/trash') { send(res, 200, library.trashSnapshot()); return; }
         if (path === '/materials') {
@@ -55,6 +56,12 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
         if (path === '/knowledge') { send(res, 200, knowledge?.overview() ?? { supported: false, available: false, reason: '当前服务未启用知识整理，请重启升级后的资料库服务', jobs: [], states: {} }); return; }
         const knowledgeJob = path.match(/^\/knowledge\/jobs\/(knowledge_[a-f0-9-]+)$/);
         if (knowledgeJob && knowledge) { send(res, 200, knowledge.get(knowledgeJob[1])); return; }
+        const pageImage = path.match(/^\/materials\/(r_[a-f0-9-]+)\/images\/(img_[a-f0-9-]+)$/);
+        if (pageImage) {
+          const original = library.pageImageFile(pageImage[1], pageImage[2]);
+          res.writeHead(200, { 'Content-Type': original.mediaType, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; sandbox" });
+          res.end(original.bytes); return;
+        }
         const match = path.match(/^\/materials\/(r_[a-f0-9-]+)(?:\/(export|original))?$/);
         if (match) {
           if (match[2] === 'export') {
@@ -73,6 +80,20 @@ export function createHandler(library: Library, queue: ImportQueue, getOrigin: (
       if (req.method === 'POST' || req.method === 'PATCH' || req.method === 'DELETE') {
         if (req.headers['x-knowledge-library'] !== '1') { send(res, 403, { error: '缺少同源请求标记' }); return; }
         const data = await body(req);
+        if (path === '/settings/images') {
+          if (!queue.imageCapture) throw new Error('请重启服务以启用图片识别');
+          send(res, 200, await queue.imageCapture.save(data.settings, data.version, data.expectedRoot, data.expectedModel, data.confirmed)); return;
+        }
+        const imageRetry = path.match(/^\/materials\/(r_[a-f0-9-]+)\/images\/retry$/);
+        const imageCancel = path.match(/^\/jobs\/(job_[a-f0-9-]+)\/images\/cancel$/);
+        if (imageRetry || imageCancel) {
+          if (req.method !== 'POST' || data.expectedRoot !== library.root) throw new Error('资料库目录已改变，请刷新后操作');
+          if (imageRetry) {
+            if (data.confirmed !== true) throw new Error('请核对图片重试范围和模型费用');
+            send(res, 202, await queue.retryImagesForMaterial(imageRetry[1], data.expectedModel, data.imageIds));
+          } else send(res, 200, queue.cancelImages(imageCancel![1]));
+          return;
+        }
         if (path.startsWith('/knowledge/')) {
           if (!knowledge) throw new Error('当前服务未启用知识整理，请重启资料库服务');
           if (data.expectedRoot !== library.root) throw new Error('资料库目录已改变，请刷新后再操作');

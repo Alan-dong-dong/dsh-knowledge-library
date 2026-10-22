@@ -40,7 +40,7 @@ def run(restart=False):
                 raise RuntimeError('Preview not ready')
             if restart:
                 env['KNOWLEDGE_UI_RESTART'] = '1'
-            for script in ['tests/ui_knowledge.py', 'tests/ui_grouping.py', 'tests/ui_incremental.py']:
+            for script in (['tests/ui_images.py'] if env.get('IMAGE_UI_ONLY') else ['tests/ui_knowledge.py', 'tests/ui_grouping.py', 'tests/ui_incremental.py']):
                 result = subprocess.run([sys.executable, script], cwd=project, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', creationflags=creation)
                 (runtime / (('restart-' if restart else '') + Path(script).stem + '.log')).write_text(result.stdout, encoding='utf-8')
                 print(result.stdout, flush=True)
@@ -53,6 +53,8 @@ def run(restart=False):
 try:
     run()
     initial_calls = len(provider.calls)
+    if env.get('IMAGE_UI_ONLY'):
+        assert provider.image_calls == 3, f'Expected 2 first attempts + 1 explicit retry, got {provider.image_calls}'
     run(restart=True)
     assert len(provider.calls) == initial_calls, 'Restart must not repeat paid model calls'
     (project / 'test-results/knowledge-model-calls.json').write_text(json.dumps({'count': len(provider.calls), 'protocol': 'actual HTTP /v1/chat/completions', 'externalProvider': False}), encoding='utf-8')

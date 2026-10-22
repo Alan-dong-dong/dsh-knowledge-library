@@ -8,13 +8,30 @@ import timers from 'node:timers/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { fetchPublicPage } from '../src/core/fetch.js';
+import { fetchPublicPage, fetchPublicImage } from '../src/core/fetch.js';
 import { extractArticle } from '../src/core/extract.js';
 import { PageAccessError } from '../src/core/page-access.js';
 
 const publicAddress = { address: '93.184.216.34', family: 4 };
 const article = '<html><head><title>Network recovery</title></head><body><article><p>This complete article is returned after a temporary network interruption and is available for reading and citation.</p></article></body></html>';
 const disconnected = () => Object.assign(new Error('Client network socket disconnected before secure TLS connection was established'), { code: 'ECONNRESET' });
+
+test('image downloads preserve bytes, origin-only referer, DNS pinning and public redirect fence', async t => {
+  await t.test('binary content and pinned connection', async t => {
+    const bytes = readFileSync(new URL('./fixtures/page-knowledge.png', import.meta.url));
+    const trace = network(t, [{ chunks: [bytes] }]);
+    const resource = await fetchPublicImage('https://example.com/picture.png', undefined, {}, 'https://article.example/private/article?token=secret');
+    assert.deepEqual(resource.bytes, bytes); assert.equal((trace.requests[0].options.headers as any).Referer, 'https://article.example/');
+    assert.equal(trace.requests[0].options.agent, false); assert.notEqual(trace.requests[0].options.rejectUnauthorized, false);
+  });
+  await t.test('redirect to private address rejected before request', async t => {
+    const trace = network(t, [{ status: 302, location: 'https://private.example/image.png' }], { resolve: async attempt => attempt === 1 ? [publicAddress] : [{ address: '127.0.0.1', family: 4 }] });
+    await assert.rejects(fetchPublicImage('https://example.com/image.png'), /内网/); assert.equal(trace.requests.length, 1);
+  });
+  await t.test('bounded image bytes', async t => {
+    const trace = network(t, [{ chunks: [Buffer.alloc(6 * 1024 * 1024 + 1)] }]); await assert.rejects(fetchPublicImage('https://example.com/image.png'), /6 MB/); assert.equal(trace.requests.length, 1);
+  });
+});
 
 interface Step {
   error?: Error;

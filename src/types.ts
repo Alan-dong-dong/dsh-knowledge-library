@@ -38,7 +38,29 @@ export interface MaterialDetail extends Material {
   content: string;
   segments: Segment[];
   path: string;
+  images?: PageImageView[];
 }
+export interface PageImageCandidate { url: string; alt: string }
+export interface PageImageRecord extends PageImageCandidate {
+  id: string;
+  status: 'pending' | 'downloading' | 'recognizing' | 'completed' | 'failed' | 'skipped';
+  attempts: number;
+  error?: string;
+  fileName?: string;
+  checksum?: string;
+  mediaType?: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  width?: number;
+  height?: number;
+  bytes?: number;
+  finalUrl?: string;
+  text?: string;
+  description?: string;
+  uncertainty?: string;
+}
+export interface PageImageManifest { schemaVersion: 1; model: string; limit: number; excluded: number; records: PageImageRecord[] }
+export type PageImageView = Omit<PageImageRecord, 'text' | 'description' | 'fileName' | 'checksum'> & { segmentId?: string; originalAvailable: boolean; model: string };
+export interface ImageCaptureSettings { enabled: boolean; maxImages: number; model?: string; version: number }
+export interface ImageCaptureStatus extends ImageCaptureSettings { supported: boolean; available: boolean; currentModel?: string; reason?: string }
 export interface TrashSnapshot { count: number; pending: number; token: string }
 export interface EmptyTrashResult { deleted: number; pending: number; errors: string[] }
 export interface CaptureFields {
@@ -75,6 +97,9 @@ export interface ImportJob {
   materialId?: string;
   error?: string;
   errorCode?: 'PAGE_REQUIRES_BROWSER';
+  progress?: string;
+  imageCapture?: { model: string; maxImages: number };
+  imageSummary?: { total: number; completed: number; failed: number; skipped: number };
 }
 export interface KnowledgeDraft {
   title: string;

@@ -80,7 +80,8 @@ export function permittedAddress(hostname: string, address: string, policy: Fetc
     && normalized.includes('.') && !/\.(localhost|local|internal|lan)$/i.test(normalized)
     && /^198\.(18|19)\.\d{1,3}\.\d{1,3}$/.test(address);
 }
-async function fetchPageOnce(input: string, signal: AbortSignal, policy: FetchPolicy): Promise<{ html: string; url: string }> {
+interface ResourceOptions { image?: boolean; referer?: string }
+async function fetchResourceOnce(input: string, signal: AbortSignal, policy: FetchPolicy, options: ResourceOptions): Promise<{ bytes: Buffer; contentType: string; url: string }> {
   let url = validateUrl(input);
   for (let redirect = 0; redirect <= 4; redirect++) {
     signal.throwIfAborted();
@@ -95,7 +96,7 @@ async function fetchPageOnce(input: string, signal: AbortSignal, policy: FetchPo
     const response = await new Promise<{ status: number; location?: string; contentType: string; bytes: Buffer }>((resolve, reject) => {
       const req = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
         method: 'GET', signal, family: address.family, agent: false,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DSH-Knowledge-Library/0.1)', Accept: 'text/html,application/xhtml+xml,text/plain;q=0.8', 'Accept-Encoding': 'identity' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DSH-Knowledge-Library/0.1)', Accept: options.image ? 'image/png,image/jpeg,image/webp,image/gif' : 'text/html,application/xhtml+xml,text/plain;q=0.8', 'Accept-Encoding': 'identity', ...(options.referer ? { Referer: new URL(options.referer).origin + '/' } : {}) },
         // Pin the validated DNS result so a second resolution cannot reach an internal host.
         lookup: (_host, _options, callback) => callback(null, address.address, address.family),
       }, res => {
@@ -104,7 +105,7 @@ async function fetchPageOnce(input: string, signal: AbortSignal, policy: FetchPo
         res.on('data', (chunk: Buffer) => {
           size += chunk.length;
           if (size > MAX_BYTES) {
-            const error = new Error('网页超过 6 MB，请下载后手动导入');
+            const error = new Error(options.image ? '图片超过 6 MB，已停止下载' : '网页超过 6 MB，请下载后手动导入');
             reject(error); req.destroy(error); return;
           }
           chunks.push(chunk);
@@ -121,19 +122,12 @@ async function fetchPageOnce(input: string, signal: AbortSignal, policy: FetchPo
       continue;
     }
     if (response.status < 200 || response.status >= 300) throw new Error(`网页返回 HTTP ${response.status}，请检查链接或改为手动导入`);
-    if (!/text\/(html|plain)|application\/xhtml\+xml/i.test(response.contentType)) throw new Error('该地址不是可提取的网页，请下载文件后导入');
-    const encoding = /charset=["']?([\w-]+)/i.exec(response.contentType)?.[1] || 'utf-8';
-    let html: string;
-    try { html = new TextDecoder(encoding).decode(response.bytes); } catch { throw new Error(`暂不支持网页编码 ${encoding}`); }
-    if (response.contentType.includes('text/plain')) {
-      html = `<html><body><article><p>${html.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('\n', '</p><p>')}</p></article></body></html>`;
-    }
-    return { html, url: url.href };
+    return { ...response, url: url.href };
   }
   throw new Error('网页重定向次数过多');
 }
 
-export async function fetchPublicPage(input: string, signal?: AbortSignal, policy: FetchPolicy = {}): Promise<{ html: string; url: string }> {
+async function fetchPublicResource(input: string, signal: AbortSignal | undefined, policy: FetchPolicy, options: ResourceOptions) {
   const timeout = AbortSignal.timeout(25_000);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const snapshot = { allowProxyFakeIp: policy.allowProxyFakeIp === true };
@@ -141,7 +135,7 @@ export async function fetchPublicPage(input: string, signal?: AbortSignal, polic
   try {
     for (;;) {
       combined.throwIfAborted();
-      try { return await fetchPageOnce(input, combined, snapshot); }
+      try { return await fetchResourceOnce(input, combined, snapshot, options); }
       catch (error) {
         combined.throwIfAborted();
         if (!TRANSIENT_ERRORS.has(errorCode(error)) || retries >= MAX_RETRIES) throw error;
@@ -156,4 +150,17 @@ export async function fetchPublicPage(input: string, signal?: AbortSignal, polic
     if (timeout.aborted) throw new Error('网页连接超时，请检查网络或代理后重试，也可以复制正文导入。', { cause: error });
     throw networkError(error, retries);
   }
+}
+
+export async function fetchPublicPage(input: string, signal?: AbortSignal, policy: FetchPolicy = {}): Promise<{ html: string; url: string }> {
+  const response = await fetchPublicResource(input, signal, policy, {});
+  if (!/text\/(html|plain)|application\/xhtml\+xml/i.test(response.contentType)) throw new Error('该地址不是可提取的网页，请下载文件后导入');
+  const encoding = /charset=["']?([\w-]+)/i.exec(response.contentType)?.[1] || 'utf-8';
+  let html: string;
+  try { html = new TextDecoder(encoding).decode(response.bytes); } catch { throw new Error(`暂不支持网页编码 ${encoding}`); }
+  if (response.contentType.includes('text/plain')) html = `<html><body><article><p>${html.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('\n', '</p><p>')}</p></article></body></html>`;
+  return { html, url: response.url };
+}
+export async function fetchPublicImage(input: string, signal?: AbortSignal, policy: FetchPolicy = {}, referer?: string) {
+  return fetchPublicResource(input, signal, policy, { image: true, referer });
 }

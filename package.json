@@ -67,6 +67,7 @@
     "test:dsh:directory": "python tests/run_dsh_directory.py",
     "test:knowledge:ui": "python tests/run_knowledge_ui.py",
     "test:dsh:knowledge": "python tests/run_dsh_knowledge.py",
+    "test:images:ui": "python tests/run_images_ui.py",
     "pack:check": "node scripts/check-package.mjs",
     "verify": "npm run build && npm test && npm run pack:check",
     "prepack": "npm run build"

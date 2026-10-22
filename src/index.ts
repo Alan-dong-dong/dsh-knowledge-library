@@ -7,7 +7,8 @@ import { Library } from './core/library.js';
 import { ImportQueue } from './core/jobs.js';
 import { createTools } from './tools.js';
 import { API_PATH, createHandler } from './http.js';
-import { fetchPublicPage } from './core/fetch.js';
+import { fetchPublicImage, fetchPublicPage } from './core/fetch.js';
+import { ImageCapture } from './core/image-capture.js';
 import { createDirectorySettings } from './directory-settings.js';
 import { KnowledgeQueue } from './core/knowledge.js';
 import { harnessKnowledgeModel } from './knowledge-model.js';
@@ -23,8 +24,9 @@ export function apply(ctx: Context, config: Config) {
   const library = new Library(config.root);
   let queue: ImportQueue;
   let knowledge: KnowledgeQueue;
-  try { knowledge = new KnowledgeQueue(library, harnessKnowledgeModel(ctx)); } catch (error) { library.close(); throw error; }
-  try { queue = new ImportQueue(library, (url, signal) => fetchPublicPage(url, signal, { allowProxyFakeIp: config.allowProxyFakeIp })); } catch (error) { void knowledge.close(); library.close(); throw error; }
+  const model = harnessKnowledgeModel(ctx);
+  try { knowledge = new KnowledgeQueue(library, model); } catch (error) { library.close(); throw error; }
+  try { const images = new ImageCapture(library, model, (url, signal, _policy, referer) => fetchPublicImage(url, signal, { allowProxyFakeIp: config.allowProxyFakeIp }, referer)); queue = new ImportQueue(library, (url, signal) => fetchPublicPage(url, signal, { allowProxyFakeIp: config.allowProxyFakeIp }), images); } catch (error) { void knowledge.close(); library.close(); throw error; }
   ctx.effect(() => async () => { await Promise.all([queue.close(), knowledge.close()]); library.close(); });
   for (const tool of createTools(library, queue, knowledge)) ctx.tools.register(tool);
   ctx.inject(['webServer'], child => {

@@ -327,6 +327,25 @@
 .kl-info .kl-proxy-option { display: flex; align-items: flex-start; gap: 8px; color: var(--kl-ink); font-size: 13px; line-height: 20px; cursor: pointer; }
 .kl-proxy-option input { flex: none; width: 16px; height: 16px; margin: 2px 0; accent-color: var(--kl-ink); }
 .kl-network-settings p { font-size: 12px; margin: 8px 0 12px; }
+.kl-image-settings { margin-top: 20px; padding-top: 16px; border-top: .5px solid var(--kl-line); }
+.kl-image-settings h3, .kl-page-images h3 { font-size: 13px; font-weight: 500; margin: 0 0 12px; }
+.kl-image-settings p, .kl-image-record p { font-size: 12px; overflow-wrap: anywhere; }
+.kl-info .kl-image-limit { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
+.kl-image-limit input { width: 68px; padding: 6px 8px; border: .5px solid var(--kl-line); border-radius: 8px; background: var(--kl-bg); }
+.kl-image-policy { padding: 10px 12px; border-left: 2px solid var(--kl-link); background: var(--kl-sidebar); color: var(--kl-secondary); font-size: 12px; line-height: 1.8; margin: 0 0 16px; overflow-wrap: anywhere; }
+.kl-page-images { margin: 24px 0; padding-block: 16px; border-block: .5px solid var(--kl-line); }
+.kl-image-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.kl-image-heading h3 { margin: 0; }
+.kl-image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 16px; }
+.kl-image-record { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.kl-image-record > a:has(img) { width: 100%; }
+.kl-image-record img { display: block; width: 100%; height: 140px; object-fit: contain; border: .5px solid var(--kl-line); border-radius: 8px; background: var(--kl-sidebar); }
+.kl-image-record small { color: var(--kl-muted); }
+.kl-image-record a { color: var(--kl-link); }
+.kl-image-record p { margin: 0; color: var(--kl-secondary); }
+.kl-delete-dialog li { overflow-wrap: anywhere; }
+.kl-job > p { color: var(--kl-secondary); }
+.kl-job > p[role="alert"] { color: var(--kl-error); }
 .kl-error, .kl-form-error { background: var(--kl-sidebar); color: var(--kl-error); font-size: 13px; line-height: 1.7; padding: 10px 12px; border-radius: 8px; overflow-wrap: anywhere; }
 .kl-error { display: flex; align-items: center; gap: 12px; margin: 0 var(--kl-gutter) 14px; }
 .kl-error button { margin-left: auto; border: 0; background: transparent; color: inherit; display: flex; padding: 4px; }

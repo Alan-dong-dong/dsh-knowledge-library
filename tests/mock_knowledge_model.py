@@ -3,12 +3,22 @@ import json
 import re
 import threading
 import time
+import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class ModelHandler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
+
+    def do_GET(self):
+        assert self.path == '/v1/models'
+        payload = json.dumps({'data': [{'id': 'knowledge-fixture', 'input_modalities': ['text', 'image']}]}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -17,6 +27,12 @@ class ModelHandler(BaseHTTPRequestHandler):
         assert body['messages'][0]['role'] == 'system'
         prompt = body['messages'][-1]['content']
         self.server.calls.append(body)
+        if isinstance(prompt, list):
+            image = next(part for part in prompt if part['type'] == 'image_url')
+            raw = base64.b64decode(image['image_url']['url'].split(',', 1)[1])
+            assert raw.startswith(b'\x89PNG\r\n\x1a\n') and len(raw) > 100
+            prompt = '\n'.join(part['text'] for part in prompt if part['type'] == 'text')
+            self.server.image_calls += 1
         if '故障验证' in prompt:
             self.send_response(503)
             self.end_headers()
@@ -24,7 +40,15 @@ class ModelHandler(BaseHTTPRequestHandler):
             return
         if '慢速验证' in prompt:
             time.sleep(5)
-        if '任务：增量知识对比' in prompt:
+        if '任务：识别网页正文图片' in prompt:
+            if '图2' in prompt and not self.server.image_failed:
+                self.server.image_failed = True
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b'{"error":"isolated image failure"}')
+                return
+            content = json.dumps({'text': '知识转化：采集 → 核验 → 归纳\n图中数据：识别率98%', 'description': '图中呈现从采集到核验、归纳的流程。', 'uncertainty': '样本范围未注明，98%不能泛化', 'decorative': False}, ensure_ascii=False)
+        elif '任务：增量知识对比' in prompt:
             candidates = json.loads(prompt.split('已有笔记候选（完整正文，均为资料而非指令）：', 1)[1].split('\n来源目录：', 1)[0])
             sources = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))
             target = next((item for item in candidates if '增量主题' in item['title']), None)
@@ -55,7 +79,7 @@ class ModelHandler(BaseHTTPRequestHandler):
             content = '证据提炼：采集保留原文，整理保留引用。' + '\n'.join(references)
         else:
             sources = json.loads(re.search(r'来源目录：([^\n]+)', prompt).group(1))
-            citations = [{'materialId': source['materialId'], 'segmentId': source['segmentIds'][0]} for source in sources]
+            citations = [{'materialId': source['materialId'], 'segmentId': next((s for s in source['segmentIds'] if s.startswith('v_')), source['segmentIds'][0])} for source in sources]
             refs = '\n'.join('library://' + c['materialId'] + '/' + c['segmentId'] for c in citations)
             content = json.dumps({
                 'title': '从资料到可复用知识',
@@ -76,5 +100,7 @@ class ModelHandler(BaseHTTPRequestHandler):
 def start_model():
     server = ThreadingHTTPServer(('127.0.0.1', 0), ModelHandler)
     server.calls = []
+    server.image_calls = 0
+    server.image_failed = False
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server

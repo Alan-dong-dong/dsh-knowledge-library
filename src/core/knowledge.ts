@@ -80,6 +80,7 @@ export class KnowledgeQueue {
       if (source.deletedAt) throw new Error('所选资料已在回收站，请恢复后再整理');
       if (source.kind === 'note') throw new Error('请选择原始资料，知识笔记不参与再次整理');
       if (source.status !== 'ready' || !source.content.trim() || !source.segments.length) throw new Error('所选资料仅归档，需先导入正文或字幕');
+      if (source.images?.some(image => ['pending','downloading','recognizing'].includes(image.status))) throw new Error('网页图片仍在处理中，请完成或停止图片处理后再整理知识');
       return source;
     });
   }

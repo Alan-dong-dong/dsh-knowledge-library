@@ -5,6 +5,7 @@ import type { DirectoryListing } from '../directory-settings.js';
 import { API, ApiError, api, post } from './api.js';
 import { Dialog } from './Dialog.js';
 import { KnowledgeBadge, KnowledgeJobsDialog, StartKnowledgeDialog } from './Knowledge.js';
+import { ImageSettings, ImageCapturePolicy, PageImages, ImageRetryDialog, imagesPending } from './ImageCapture.js';
 
 const kinds: Record<MaterialKind, { label: string; icon: string }> = {
   web: { label: '网页', icon: 'web' }, text: { label: '文本', icon: 'file' }, file: { label: '文件', icon: 'file' },
@@ -37,6 +38,7 @@ export function App() {
   const [generation, setGeneration] = useState<{ root: string; sourceIds: string[]; mode?: 'smart' | 'compose' }>();
   const [knowledgeOpen, setKnowledgeOpen] = useState<{ root: string; jobId?: string }>();
   const [showJobs, setShowJobs] = useState(false);
+  const [imageRetry, setImageRetry] = useState<{ id: string; root: string }>();
   const [showInfo, setShowInfo] = useState(false);
   const [settingsFromJobs, setSettingsFromJobs] = useState(false);
   const [showNavigation, setShowNavigation] = useState(false);
@@ -187,7 +189,9 @@ export function App() {
             {detail.sourceNote && <aside className="kl-source-note">{detail.sourceNote}</aside>}
             {detail.deletedAt && <div className="kl-notice"><Icon name="trash" /><div><strong>这份资料在回收站</strong><p>原文与来源引用仍可查看，恢复后回到原分类。</p></div></div>}
             {detail.status === 'stored' && <div className="kl-notice"><Icon name="file" /><div><strong>原文件已安全归档</strong><p>{detail.extraction}</p></div></div>}
-            {!detail.deletedAt && detail.kind !== 'note' && detail.status === 'ready' && <div className="kl-knowledge-source"><div><KnowledgeBadge state={knowledge?.states[detail.id]} /><span>从这份资料形成理解、方法与待验证的问题。</span></div><div className="kl-knowledge-actions">{['running', 'draft', 'grouping'].includes(knowledge?.states[detail.id]?.status || '') ? <button className="kl-secondary" onClick={() => stats && setKnowledgeOpen({ root: stats.root, jobId: knowledge?.states[detail.id]?.jobId })}>{knowledge?.states[detail.id]?.status === 'grouping' ? '查看分组方案' : '查看整理任务'}</button> : <button className="kl-secondary" disabled={!knowledge?.supported} onClick={() => generateFor([detail.id])}>生成知识笔记</button>}{knowledge?.states[detail.id]?.noteIds.map(id => <button key={id} className="kl-secondary" onClick={() => openKnowledgeSource(id)}>查看知识笔记<Icon name="arrow" size={14} /></button>)}</div>{!knowledge?.supported && <p className="kl-muted">请重启资料库服务以启用知识整理。</p>}</div>}
+            {!detail.deletedAt && detail.kind !== 'note' && detail.status === 'ready' && <div className="kl-knowledge-source"><div><KnowledgeBadge state={knowledge?.states[detail.id]} /><span>从这份资料形成理解、方法与待验证的问题。</span></div><div className="kl-knowledge-actions">{['running', 'draft', 'grouping'].includes(knowledge?.states[detail.id]?.status || '') ? <button className="kl-secondary" onClick={() => stats && setKnowledgeOpen({ root: stats.root, jobId: knowledge?.states[detail.id]?.jobId })}>{knowledge?.states[detail.id]?.status === 'grouping' ? '查看分组方案' : '查看整理任务'}</button> : <button className="kl-secondary" disabled={!knowledge?.supported || imagesPending(detail)} onClick={() => generateFor([detail.id])}>生成知识笔记</button>}{knowledge?.states[detail.id]?.noteIds.map(id => <button key={id} className="kl-secondary" onClick={() => openKnowledgeSource(id)}>查看知识笔记<Icon name="arrow" size={14} /></button>)}</div>{!knowledge?.supported && <p className="kl-muted">请重启资料库服务以启用知识整理。</p>}</div>}
+            <PageImages detail={detail} onRetry={() => stats && setImageRetry({ id: detail.id, root: stats.root })} onJump={setAnchor} />
+            {imagesPending(detail) && <p className="kl-image-policy">正文已保存，图片仍在处理中。图片处理结束或停止后可生成知识笔记。</p>}
             <div className="kl-content">{detail.segments.map(segment => <div className={`kl-segment ${anchor === segment.id ? 'kl-cited' : ''}`} key={segment.id} id={segment.id} data-segment-id={segment.id}>
               <div className="kl-segment-line"><span>{segment.startSeconds !== undefined ? time(segment.startSeconds) : segment.id}</span><button title="摘录为笔记" aria-label={`摘录 ${segment.id} 为笔记`} onClick={() => setEditor({ mode: 'note', source: detail, segment })}><Icon name="note" size={14} /></button><button title="复制段落引用" aria-label={`复制 ${segment.id} 引用`} onClick={() => void copy(`library://${detail.id}/${segment.id}`)}><Icon name="copy" size={14} /></button></div>
               {/^#{1,6}\s/.test(segment.text) ? <h3>{segment.text.replace(/^#{1,6}\s+/, '')}</h3> : <p>{segment.text}</p>}
@@ -213,12 +217,15 @@ export function App() {
       else notify(`回收站已清空，永久删除 ${result.deleted} 份资料`);
       searchRef.current?.focus();
     }} />}
-    {showJobs && <Dialog title="采集任务" description="网页在后台提取正文。关闭应用后，下次启动会恢复未完成任务。" onClose={() => setShowJobs(false)}>
+    {imageRetry && <ImageRetryDialog {...imageRetry} onClose={() => setImageRetry(undefined)} onStarted={() => { setImageRetry(undefined); refresh(); notify('失败图片已加入重试队列'); }} />}
+    {showJobs && <Dialog title="采集任务" description="网页在后台提取正文和已启用的图片。图片识别中断后需主动重试，不会在重启时自动重复模型请求。" onClose={() => setShowJobs(false)}>
       <div className="kl-jobs">{!jobs.length ? <p className="kl-muted">还没有采集任务。添加一个网页链接开始。</p> : jobs.map(job => <div className="kl-job" key={job.id}>
         <div><span className={`kl-job-status ${job.status}`}>{job.status === 'failed' && job.errorCode === 'PAGE_REQUIRES_BROWSER' ? '需浏览器验证' : ({ queued: '排队中', running: '提取中', completed: '已完成', failed: '失败' })[job.status]}</span><time>{date(job.createdAt)}</time></div>
-        <strong>{job.url}</strong>{job.error && <p role={job.status === 'failed' ? 'alert' : undefined}>{job.error}</p>}
+        <strong>{job.url}</strong>{job.progress && <p>{job.progress}</p>}{job.imageSummary && <p>图片：{job.imageSummary.completed} 张已识别 · {job.imageSummary.failed} 张未完成 · {job.imageSummary.skipped} 张跳过</p>}{job.error && <p role={job.status === 'failed' ? 'alert' : undefined}>{job.error}</p>}
         <div className="kl-job-actions">
           {job.materialId && <button onClick={() => { setSelected(job.materialId); setShowJobs(false); refresh(); }}>查看资料 <Icon name="arrow" size={14} /></button>}
+          {job.materialId && job.imageCapture && ['queued', 'running'].includes(job.status) && <button onClick={() => void post(`/jobs/${job.id}/images/cancel`, { expectedRoot: stats?.root }).then(refresh).catch(e => setError(e.message))}>停止图片处理</button>}
+          {job.materialId && job.status === 'completed' && !!job.imageSummary?.failed && <button onClick={() => { if (stats) { setShowJobs(false); setImageRetry({ id: job.materialId!, root: stats.root }); } }}>重试失败图片</button>}
           {job.status === 'failed' && <>
             {/^https?:\/\//i.test(job.url) && <a href={job.url} target="_blank" rel="noopener noreferrer">打开原网页<Icon name="arrow" size={14} /></a>}
             <button onClick={() => { setShowJobs(false); setEditor({ mode: 'capture', initialType: 'text', sourceUrl: job.url }); }}>粘贴正文</button>
@@ -324,7 +331,8 @@ function SettingsDialog({ root, warnings, onClose, onChanged, onRebuilt, onProxy
         {settings && !settings.canChange && <p className="kl-muted">请在 Harness 中选择和切换目录；独立预览可通过启动配置指定目录。</p>}
         {!!changed && <div className="kl-root-confirm"><p>切换后将读取新目录，并将后续资料保存到那里。原目录的资料会保留，不会自动搬迁。</p><div><button className="kl-secondary" disabled={saving || busy} onClick={() => { setTarget(root); setError(''); }}>取消修改</button><button className="kl-primary" disabled={saving || busy} onClick={() => void change()}>{saving ? '正在切换…' : '切换资料库'}</button></div></div>}
         <section className="kl-network-settings" aria-label="网页采集设置"><h3>网页采集</h3><label className="kl-proxy-option"><input type="checkbox" aria-describedby="kl-proxy-help" checked={proxyMode} disabled={!settings?.canChangeNetwork || saving || busy} onChange={e => { setProxyMode(e.target.checked); setError(''); }} /><span>Clash/Mihomo 代理兼容（fake-IP）</span></label><p id="kl-proxy-help">本机使用 Clash/Mihomo TUN 的 fake-IP DNS 时开启，允许通过代理采集解析到 198.18.* 或 198.19.* 的网站。本机及其他内网地址仍不允许访问。</p>{settings?.canChangeNetwork && !settings.canChange && <p className="kl-muted">此设置用于当前资料库的独立预览，保存后对后续采集生效。</p>}{settings && !settings.canChangeNetwork && <p className="kl-muted">当前环境无法保存采集设置。</p>}{settings?.canChangeNetwork && proxyMode !== settings.allowProxyFakeIp && <button className="kl-secondary" disabled={saving || busy} onClick={() => void saveProxyMode()}>{saving ? '正在保存…' : '保存采集设置'}</button>}</section>
-        <p>每份资料保留原始文件、正文、元数据和引用段落。分类对应本地文件夹，插件卸载不会删除这些文件。</p><p>本版本可提取文章正文及字幕；音视频、PDF 等格式可以归档，自动转写和 OCR 尚未接入。</p>
+        <ImageSettings key={root} root={root} />
+        <p>每份资料保留原始文件、正文、元数据和引用段落。分类对应本地文件夹，插件卸载不会删除这些文件。</p><p>支持网页正文图片识别；音视频、PDF 等格式可以归档，自动转写和文件 OCR 尚未接入。</p>
         {warnings.map(w => <p role="alert" key={w}>{w}</p>)}
         <button className="kl-secondary" disabled={busy || saving} onClick={() => { setSaving(true); setError(''); void post('/rebuild', {}).then(onRebuilt).catch(e => setError(e.message)).finally(() => setSaving(false)); }}>从资料文件重建索引</button>
       </>}
@@ -377,6 +385,7 @@ function EditorDialog({ editor, categories, onClose, onSaved }: { editor: Editor
     <form onSubmit={submit} className="kl-editor">
       {!editing && !note && <div className="kl-tabs" role="tablist" aria-label="采集方式">{(['url', 'text', 'file'] as const).map(value => <button type="button" role="tab" aria-selected={type === value} className={type === value ? 'active' : ''} key={value} onClick={() => changeType(value)}><Icon name={value === 'url' ? 'web' : value === 'file' ? 'upload' : 'file'} size={17} />{value === 'url' ? '网页链接' : value === 'file' ? '本地文件' : '文本摘录'}</button>)}</div>}
       {!editing && !note && type === 'url' && <label>网页地址<input type="url" required placeholder="https://…" value={content} onChange={e => setContent(e.target.value)} /><small>支持可直接访问的文章网页。登录页或动态页面可复制正文导入。</small></label>}
+      {!editing && !note && type === 'url' && <ImageCapturePolicy />}
       {!editing && !note && type === 'file' && <label className="kl-upload"><Icon name="upload" size={27} /><strong>{file?.name || '选择或拖入文件'}</strong><span>文本、HTML、SRT / VTT 字幕及其他文件 · 最大 64 MB</span><input aria-label="选择本地文件" type="file" onChange={e => setFile(e.target.files?.[0])} /><small>视频和 PDF 可归档，当前版本不会自动转写或 OCR。</small></label>}
       <label>标题{!editing && !note && <em>可选</em>}<input required={editing || note} value={title} onChange={e => setTitle(e.target.value)} placeholder={type === 'url' && !note ? '自动提取网页标题，也可以自己填写' : '给这份内容起个名字'} maxLength={300} /></label>
       {!editing && (note || type === 'text') && <label>{note ? '笔记内容' : '正文'}<textarea required rows={7} value={content} onChange={e => setContent(e.target.value)} placeholder={note ? '记录你的理解、结论与尚待验证的问题…' : '粘贴想保留的文字，支持 Markdown…'} /></label>}
@@ -386,7 +395,7 @@ function EditorDialog({ editor, categories, onClose, onSaved }: { editor: Editor
       <label>标签<em>可选</em><input value={tags} onChange={e => setTags(e.target.value)} placeholder="用逗号分隔，例如：待读，RAG，实践" /></label>
       <label>来源备注<em>可选</em><input value={sourceNote} onChange={e => setSourceNote(e.target.value)} placeholder="为什么值得保存，或者它来自哪里" /></label>
       {error && <div className="kl-form-error" role="alert">{error}</div>}
-      <footer><span><span className="kl-live-dot" />仅保存在本地</span><button type="button" className="kl-secondary" disabled={busy} onClick={onClose}>取消</button><button className="kl-primary" type="submit" disabled={busy}>{busy ? '保存中…' : editing ? '保存修改' : note ? '保存笔记' : type === 'url' ? '开始采集' : '保存资料'}{!busy && <Icon name="arrow" size={16} />}</button></footer>
+      <footer><span><span className="kl-live-dot" />{!editing && !note && type === 'url' ? '采集结果保存在本地' : '仅保存在本地'}</span><button type="button" className="kl-secondary" disabled={busy} onClick={onClose}>取消</button><button className="kl-primary" type="submit" disabled={busy}>{busy ? '保存中…' : editing ? '保存修改' : note ? '保存笔记' : type === 'url' ? '开始采集' : '保存资料'}{!busy && <Icon name="arrow" size={16} />}</button></footer>
     </form>
   </Dialog>;
 }

@@ -25,7 +25,7 @@ function extractWechatArticle(document: Document, url: string) {
   const savedWechat = host === 'import.invalid' && body?.classList.contains('rich_media_content')
     && document.querySelector('#activity-name.rich_media_title');
   if (host !== 'mp.weixin.qq.com' && !savedWechat) return null;
-  if (!body || (body.textContent?.trim().length ?? 0) < 40) return null;
+  if (!body || ((body.textContent?.trim().length ?? 0) < 40 && !body.querySelector('img'))) return null;
   // WeChat hides the entire body until its scripts run. Read the explicit article
   // container without running those scripts or discarding it as invisible text.
   return {
@@ -66,8 +66,9 @@ export function extractArticle(html: string, url: string) {
   assertArticleAccess(document, url);
   for (const node of Array.from(document.querySelectorAll('form'))) node.remove();
   const wechat = extractWechatArticle(document, url);
-  const article = wechat || new Readability(document).parse();
-  if (!article?.content || (article.textContent?.trim().length ?? 0) < 40) {
+  const fallback = document.querySelector('article,main');
+  const article = wechat || new Readability(document).parse() || (fallback?.querySelector('img') ? { title: document.title, byline: undefined, content: fallback.innerHTML, textContent: fallback.textContent } : null);
+  if (!article?.content || ((article.textContent?.trim().length ?? 0) < 40 && !/<img\b/i.test(article.content))) {
     throw new Error('未提取到有效正文。该网页可能需要登录或动态渲染，请复制正文或导入保存的 HTML。');
   }
   const baseUrl = wechat ? document.baseURI : url;
@@ -80,13 +81,21 @@ export function extractArticle(html: string, url: string) {
       else anchor.removeAttribute('href');
     } catch { anchor.removeAttribute('href'); }
   }
-  // Preserve image references; do not silently fetch third-party resources.
+  const images: Array<{ url: string; alt: string }> = []; const seen = new Set<string>();
+  // Discovery is inert. Downloads only happen later with explicit capture settings.
   for (const image of Array.from(clean.querySelectorAll('img'))) {
     try {
-      const value = (wechat && image.getAttribute('data-src')) || image.getAttribute('src');
+      const value = image.getAttribute('data-src') || image.getAttribute('data-original') || image.getAttribute('src');
       if (!value?.trim()) { image.remove(); continue; }
       const src = new URL(value, baseUrl);
-      if (['http:', 'https:'].includes(src.protocol)) image.setAttribute('src', src.href);
+      if (['http:', 'https:'].includes(src.protocol)) {
+        src.hash = ''; image.setAttribute('src', src.href);
+        const width = Number(image.getAttribute('width')); const height = Number(image.getAttribute('height'));
+        const decoration = /(?:^|[\s_-])(?:avatar|icon|advert|tracking|qrcode|qr-code)(?:$|[\s_-])/i.test(image.className || '') || !!image.closest('nav,header,footer,aside');
+        if (!decoration && !(width > 0 && width <= 64) && !(height > 0 && height <= 64) && !seen.has(src.href)) {
+          seen.add(src.href); images.push({ url: src.href, alt: (image.getAttribute('alt') || '').trim().slice(0, 500) });
+        }
+      }
       else image.remove();
     } catch { image.remove(); }
   }
@@ -95,6 +104,7 @@ export function extractArticle(html: string, url: string) {
     author: article.byline || undefined,
     extraction: wechat ? '微信正文容器提取' : 'Readability 正文提取',
     content: markdown.turndown(clean.body.innerHTML).trim(),
+    images,
   };
 }
 

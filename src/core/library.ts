@@ -2,11 +2,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, unlinkSync, openSync, closeSync } from 'node:fs';
 import { resolve, join, dirname, basename, extname, relative, isAbsolute } from 'node:path';
-import type { CaptureFields, CaptureResult, Citation, EmptyTrashResult, Material, MaterialDetail, SearchOptions, SearchResult, Segment, TrashSnapshot } from '../types.js';
+import type { CaptureFields, CaptureResult, Citation, EmptyTrashResult, Material, MaterialDetail, PageImageManifest, SearchOptions, SearchResult, Segment, TrashSnapshot } from '../types.js';
 import { PurgeStore } from './purge.js';
 import { extractArticle, formatTime, parseSubtitles, splitSegments } from './extract.js';
 import { validateUrl } from './fetch.js';
 import { noteFingerprint } from './incremental.js';
+import { imageHash, imageSupplement, inspectImage, validateImageManifest } from './page-images.js';
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_TEXT_CHARS = 2_000_000;
@@ -85,7 +86,8 @@ export class Library {
   private index(meta: Material, path: string, content: string) {
     this.db.prepare('INSERT OR REPLACE INTO materials VALUES (?,?,?,?,?,?)').run(meta.id, path, JSON.stringify(meta), content, meta.contentHash, meta.updatedAt);
     this.db.prepare('DELETE FROM material_fts WHERE id=?').run(meta.id);
-    this.db.prepare('INSERT INTO material_fts (id,title,content) VALUES (?,?,?)').run(meta.id, meta.title, content);
+    const supplement = meta.kind === 'web' ? imageSupplement(this.readImageDataAt(path)).text : '';
+    this.db.prepare('INSERT INTO material_fts (id,title,content) VALUES (?,?,?)').run(meta.id, meta.title, content + '\n\n' + supplement);
   }
   rebuild(): { indexed: number; warnings: string[] } {
     this.recoverNoteUpdate();
@@ -111,6 +113,7 @@ export class Library {
           }
           // The physical category remains recoverable after an interrupted move.
           meta.category = relative(join(this.root, 'materials'), dirname(path)).split('\\').join('/');
+          if (meta.kind === 'web') this.readImageDataAt(path);
           entries.push({ meta, path, content });
         } catch (error) { this.warnings.push(`${entry.name}: ${(error as Error).message}`); }
       }
@@ -133,7 +136,54 @@ export class Library {
   get(id: string): MaterialDetail {
     this.recoverNoteUpdate();
     const row = this.row(id);
-    return { ...JSON.parse(row.meta), content: row.content, segments: JSON.parse(readFileSync(join(row.path, 'segments.json'), 'utf8')), path: row.path };
+    const meta = JSON.parse(row.meta) as Material;
+    const images = meta.kind === 'web' ? this.readImageDataAt(row.path) : undefined;
+    const supplement = imageSupplement(images);
+    return { ...meta, content: row.content + (supplement.text ? '\n\n' + supplement.text : ''), segments: [...JSON.parse(readFileSync(join(row.path, 'segments.json'), 'utf8')), ...supplement.segments], path: row.path,
+      ...(images ? { images: images.records.map(record => { const { text: _text, description: _description, fileName, checksum: _checksum, ...view } = record; return { ...view, model: images.model, originalAvailable: !!fileName && existsSync(join(row.path, 'images', fileName)), ...(record.status === 'completed' ? { segmentId: `v_${record.id.slice(4).replaceAll('-', '')}_1` } : {}) }; }) } : {}) };
+  }
+  private readImageDataAt(path: string): PageImageManifest | undefined {
+    const file = join(path, '.page-images.json'); this.assertContained(file);
+    if (!existsSync(file)) return;
+    const value = JSON.parse(readFileSync(file, 'utf8'));
+    if (!value || imageHash(JSON.stringify(value.data)) !== value.checksum) throw new Error('网页图片补充记录校验失败，请恢复 .page-images.json');
+    return validateImageManifest(value.data);
+  }
+  pageImages(id: string) { return structuredClone(this.readImageDataAt(this.row(id).path)); }
+  savePageImages(id: string, data: PageImageManifest) {
+    validateImageManifest(data);
+    const row = this.row(id); const meta = JSON.parse(row.meta) as Material;
+    if (meta.kind !== 'web') throw new Error('仅网页资料支持图片补充');
+    const previous = this.readImageDataAt(row.path);
+    if (previous && (previous.model !== data.model || previous.limit !== data.limit || previous.excluded !== data.excluded || JSON.stringify(previous.records.map(record => [record.id, record.url, record.alt])) !== JSON.stringify(data.records.map(record => [record.id, record.url, record.alt])))) throw new Error('图片计划与模型已固定，不能静默更换');
+    for (const old of previous?.records.filter(image => image.status === 'completed') || []) if (JSON.stringify(data.records.find(image => image.id === old.id)) !== JSON.stringify(old)) throw new Error('已保存的图片文字和段落不可改写');
+    const file = join(row.path, '.page-images.json'); this.assertContained(file);
+    this.db.exec('BEGIN IMMEDIATE');
+    try { atomicJson(file, { data, checksum: imageHash(JSON.stringify(data)) }); this.index(meta, row.path, row.content); this.db.exec('COMMIT'); }
+    catch (error) {
+      this.db.exec('ROLLBACK');
+      if (previous) atomicJson(file, { data: previous, checksum: imageHash(JSON.stringify(previous)) }); else if (existsSync(file)) unlinkSync(file);
+      throw error;
+    }
+  }
+  savePageImageFile(id: string, imageId: string, bytes: Buffer) {
+    if (!/^img_[a-f0-9-]{36}$/.test(imageId)) throw new Error('图片ID无效');
+    const row = this.row(id); const meta = JSON.parse(row.meta) as Material;
+    if (meta.kind !== 'web' || meta.deletedAt) throw new Error('网页已删除，停止保存图片');
+    const info = inspectImage(bytes); const fileName = `${imageId}.${info.extension}`;
+    const directory = join(row.path, 'images'); const file = join(directory, fileName); this.assertContained(file);
+    mkdirSync(directory, { recursive: true });
+    const checksum = imageHash(bytes);
+    if (existsSync(file)) { if (imageHash(readFileSync(file)) !== checksum) throw new Error('原图缓存校验失败，拒绝覆盖'); }
+    else writeFileSync(file, bytes, { flag: 'wx' });
+    return { fileName, checksum, mediaType: info.mediaType, width: info.width, height: info.height, bytes: bytes.length };
+  }
+  pageImageFile(id: string, imageId: string) {
+    const row = this.row(id); const image = this.readImageDataAt(row.path)?.records.find(record => record.id === imageId);
+    if (!image?.fileName) throw new Error('图片尚未保存');
+    const file = join(row.path, 'images', image.fileName); this.assertContained(file);
+    const bytes = readFileSync(file); if (imageHash(bytes) !== image.checksum) throw new Error('原图校验失败，请检查图片文件');
+    return { bytes, mediaType: image.mediaType!, name: image.fileName };
   }
   has(id: string): boolean { return Boolean(this.db.prepare('SELECT id FROM materials WHERE id=?').get(id)); }
   original(id: string): { bytes: Buffer; name: string } {
@@ -235,7 +285,7 @@ export class Library {
   update(id: string, fields: CaptureFields): MaterialDetail {
     const item = this.get(id);
     if (item.deletedAt) throw new Error('请先从回收站恢复资料后再编辑');
-    const { content, segments: _segments, path: oldPath, ...meta } = item;
+    const row = this.row(id); const { content, path: oldPath } = row; const meta = JSON.parse(row.meta) as Material;
     const previous = structuredClone(meta);
     if (fields.title !== undefined) {
       if (!cleanString(fields.title)) throw new Error('标题不能为空');
@@ -273,7 +323,7 @@ export class Library {
   private setDeleted(id: string, deleted: boolean): MaterialDetail {
     const item = this.get(id);
     if (Boolean(item.deletedAt) === deleted) return item;
-    const { content, segments: _segments, path, ...previous } = item;
+    const row = this.row(id); const { content, path } = row; const previous = JSON.parse(row.meta) as Material;
     const meta = { ...previous, updatedAt: now() };
     if (deleted) { meta.deletedAt = now(); meta.deletionId = randomUUID(); }
     else { delete meta.deletedAt; delete meta.deletionId; }
@@ -433,7 +483,7 @@ export class Library {
     const limit = Math.max(1, Math.min(100, Number(options.limit) || 40));
     const offset = Math.max(0, Math.floor(Number(options.offset) || 0));
     const terms = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const rows = this.db.prepare('SELECT id,meta,content FROM materials ORDER BY updated_at DESC').all() as Array<{ id: string; meta: string; content: string }>;
+    const rows = this.db.prepare('SELECT id,path,meta,content FROM materials ORDER BY updated_at DESC').all() as Array<{ id: string; path: string; meta: string; content: string }>;
     // Literal substring matching guarantees one- and two-character Chinese searches.
     // FTS narrows body/title candidates for longer terms; metadata is always searched too.
     let indexed: Set<string> | undefined;
@@ -449,7 +499,8 @@ export class Library {
       if (options.collection && meta.collection !== options.collection) return false;
       const metadataText = `${meta.title}\n${meta.category}\n${meta.tags.join(' ')}\n${meta.collection}\n${meta.sourceNote}`.toLocaleLowerCase();
       if (!terms.length) return true;
-      const haystack = metadataText + '\n' + row.content.toLocaleLowerCase();
+      const supplement = meta.kind === 'web' ? imageSupplement(this.readImageDataAt(row.path)).text : '';
+      const haystack = metadataText + '\n' + row.content.toLocaleLowerCase() + '\n' + supplement.toLocaleLowerCase();
       // FTS is an optimization hint only; punctuation and Unicode never change correctness.
       return indexed?.has(row.id) || terms.every(term => haystack.includes(term));
     });
